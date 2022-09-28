@@ -698,16 +698,13 @@ testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
 
   forMseq_ [1..20] $ \x -> do
       () <- readChan pump
-      writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver 0)
+      writeChan z2f ClockZ2F_MakeProgress
 
   () <- readChan pump
   writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Delay 2)
-  () <- readChan pump
-  writeChan z2f ClockZ2F_MakeProgress
-  () <- readChan pump
-  writeChan z2f ClockZ2F_MakeProgress
-  () <- readChan pump
-  writeChan z2f ClockZ2F_MakeProgress
+  forMseq_ [1..3] $ \x -> do
+      () <- readChan pump
+      writeChan z2f ClockZ2F_MakeProgress
 
   -- Output is the transcript
   () <- readChan pump
@@ -1107,7 +1104,8 @@ simACastBroken variantT variantR variantD (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
 
   fork $ forever $ do
       () <- readChan sbxpump
-      undefined
+      -- undefined
+      ?pass
       return ()
   return ()
 
