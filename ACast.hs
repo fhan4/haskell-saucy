@@ -722,10 +722,11 @@ testCompareBrokenAgreement = runITMinIO 120 $ do
   let variantT = ACastTSmall
   let variantR = ACastRCorrect
   let variantD = ACastDSmall
+  let prot () = protACastBroken variantT variantR variantD
   liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
   t1R <- runRandRecord $ execUC
              testEnvACastBrokenAgreement
-             (runAsyncP $ protACastBroken variantT variantR variantD)
+             (runAsyncP $ prot ())
              (runAsyncF $ bangFAsync fMulticast)
              dummyAdversary
   let (t1, bits) = t1R
@@ -736,7 +737,7 @@ testCompareBrokenAgreement = runITMinIO 120 $ do
              testEnvACastBrokenAgreement
              (idealProtocol)
              (runAsyncF $ fACast)
-             (simACastBroken variantT variantR variantD)
+             (simACastBroken $ prot ())
   return (t1 == t2)
 
 testCompareBrokenReliability :: Int -> Int -> IO Bool
@@ -744,10 +745,11 @@ testCompareBrokenReliability envToken advToken = runITMinIO 120 $ do
   let variantT = ACastTSmall
   let variantR = ACastRCorrect
   let variantD = ACastDCorrect
+  let prot () = protACastBroken variantT variantR variantD
   liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
   t1R <- runRandRecord $ execUC
              testEnvACastBrokenReliability
-             (runAsyncP $ protACastBroken variantT variantR variantD)
+             (runAsyncP $ prot ())
              (runAsyncFToken (bangFAsync fMulticast) envToken advToken)
              dummyAdversary
   let (t1, bits) = t1R
@@ -758,21 +760,20 @@ testCompareBrokenReliability envToken advToken = runITMinIO 120 $ do
              testEnvACastBrokenReliability
              (idealProtocol)
              (runAsyncFToken fACast envToken advToken)
-             (simACastBroken variantT variantR variantD)
+             (simACastBroken $ prot ())
   return (t1 == t2)
 
-testCompareBrokenReliabilityMoreToken :: IO Bool
-testCompareBrokenReliabilityMoreToken = runITMinIO 120 $ do
+testCompareBrokenReliabilityNoToken :: IO Bool
+testCompareBrokenReliabilityNoToken = runITMinIO 120 $ do
   let variantT = ACastTSmall
   let variantR = ACastRCorrect
   let variantD = ACastDCorrect
-  let envToken = 100
-  let advToken = 100
+  let prot () = protACastBroken variantT variantR variantD
   liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
   t1R <- runRandRecord $ execUC
              testEnvACastBrokenReliability
-             (runAsyncP $ protACastBroken variantT variantR variantD)
-             (runAsyncFToken (bangFAsync fMulticast) envToken advToken)
+             (runAsyncP $ prot ())
+             (runAsyncF $ bangFAsync fMulticast)
              dummyAdversary
   let (t1, bits) = t1R
   liftIO $ putStrLn ""
@@ -781,8 +782,8 @@ testCompareBrokenReliabilityMoreToken = runITMinIO 120 $ do
   t2 <- runRandReplay bits $ execUC
              testEnvACastBrokenReliability
              (idealProtocol)
-             (runAsyncFToken fACast envToken advToken)
-             (simACastBroken variantT variantR variantD)
+             (runAsyncF fACast)
+             (simACastBroken $ prot ())
   return (t1 == t2)
 
 testCompareBrokenValidity :: IO Bool
@@ -790,10 +791,11 @@ testCompareBrokenValidity = runITMinIO 120 $ do
   let variantT = ACastTCorrect
   let variantR = ACastRSmall
   let variantD = ACastDCorrect
+  let prot () = protACastBroken variantT variantR variantD
   liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
   t1R <- runRandRecord $ execUC
              testEnvACastBrokenValidity
-             (runAsyncP $ protACastBroken variantT variantR variantD)
+             (runAsyncP $ prot ())
              (runAsyncF $ bangFAsync fMulticast)
              dummyAdversary
   let (t1, bits) = t1R
@@ -804,7 +806,7 @@ testCompareBrokenValidity = runITMinIO 120 $ do
              testEnvACastBrokenValidity
              (idealProtocol)
              (runAsyncF $ fACast)
-             (simACastBroken variantT variantR variantD)
+             (simACastBroken $ prot ())
   return (t1 == t2)
 
 {-- TODO: This is duplicated in MPC2.hs, fix it --}
@@ -943,7 +945,9 @@ simACast (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
       return ()
   return ()
 
-simACastBroken :: MonadAdversary m => ACastTVariant -> ACastRVariant -> ACastDVariant ->
+simACastBroken :: MonadAdversary m => (MonadProtocol m => Protocol (ClockP2F (ACastP2F String)) (ACastF2P String)
+                                                                   (SID, MulticastF2P (ACastMsg String))
+                                                                   (SID, ACastMsg String) m) ->
                                       Adversary (SttCruptZ2A (ClockP2F (SID, ACastMsg String))
                                                 (Either (ClockA2F)
                                                         (SID, MulticastA2F (ACastMsg String))))
@@ -952,7 +956,7 @@ simACastBroken :: MonadAdversary m => ACastTVariant -> ACastRVariant -> ACastDVa
                                                         (SID, MulticastF2A (ACastMsg String))))
                                           (ACastF2P String) (ClockP2F (ACastP2F String))
                                           (Either (ClockF2A String) Void) (Either ClockA2F Void) m
-simACastBroken variantT variantR variantD (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
+simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
     -- Sender and set of parties is encoded in SID
   let (pidS :: PID, parties :: [PID], t :: Int, sssid :: String) = readNote "protACast" $ snd ?sid
 
@@ -1067,8 +1071,6 @@ simACastBroken variantT variantR variantD (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
         let Left (ClockF2A_Leaks leaks) = mf
         return leaks
 
-  let sbxProt () = protACastBroken variantT variantR variantD
-
   let sbxAdv (z2a',a2z') (p2a',a2p') (f2a',a2f') = do
         -- The sandbox adversary poses as the dummy adversary, but takes every
         -- activation opportunity to synchronize with the ideal world functionality
@@ -1094,7 +1096,7 @@ simACastBroken variantT variantR variantD (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
   -- sandbox simulation.
   mf <- selectRead z2a f2a   -- TODO: could there be a P2A here?
 
-  fork $ execUC_ sbxEnv (runAsyncP $ sbxProt ()) (runAsyncF (sbxBullRand ())) sbxAdv
+  fork $ execUC_ sbxEnv (runAsyncP sbxProt) (runAsyncF (sbxBullRand ())) sbxAdv
   () <- readChan sbxpump
 
   -- After initializing, the sbxAdv is now listening on z2a,f2a,p2a. So this passes to those
