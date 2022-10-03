@@ -530,6 +530,9 @@ testEnvACastBrokenValidity z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
         ?pass
       _ -> error $ "Help!" ++ show mb
 
+  forMseq_ [1..24] $ \x -> do
+      () <- readChan pump
+      writeChan z2a SttCruptZ2A_TokenSend
 
   () <- readChan pump
   writeChan z2p ("Alice", ClockP2F_Through $ ACastP2F_Input "1")
@@ -598,6 +601,9 @@ testEnvACastBrokenAgreement z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = 
         ?pass
       _ -> error $ "Help!" ++ show mb
 
+  forMseq_ [1..24] $ \x -> do
+      () <- readChan pump
+      writeChan z2a SttCruptZ2A_TokenSend
 
   () <- readChan pump
   writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Bob" (ACast_VAL "1"))
@@ -675,7 +681,7 @@ testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
         ?pass
       _ -> error $ "Help!" ++ show mb
 
-  forMseq_ [1..24] $ \x -> do
+  forMseq_ [1..25] $ \x -> do
       () <- readChan pump
       writeChan z2a SttCruptZ2A_TokenSend
 
@@ -706,7 +712,7 @@ testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
 
   () <- readChan pump
   writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Delay 2)
-  forMseq_ [1..3] $ \x -> do
+  forMseq_ [1..24] $ \x -> do
       () <- readChan pump
       writeChan z2f ClockZ2F_MakeProgress
 
@@ -744,31 +750,9 @@ testCompareBrokenAgreement = runITMinIO 120 $ do
              (runTokenA $ simACastBroken $ prot ())
   return (t1 == t2)
 
-testCompareBrokenReliability :: Int -> Int -> IO Bool
-testCompareBrokenReliability envToken advToken = runITMinIO 120 $ do
-  let variantT = ACastTSmall
-  let variantR = ACastRCorrect
-  let variantD = ACastDCorrect
-  let prot () = protACastBroken variantT variantR variantD
-  liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
-  t1R <- runRandRecord $ execUC
-             testEnvACastBrokenReliability
-             (runAsyncP $ prot ())
-             (runAsyncFToken (bangFAsync fMulticast) envToken advToken)
-             (runTokenA dummyAdversaryToken)
-  let (t1, bits) = t1R
-  liftIO $ putStrLn ""
-  liftIO $ putStrLn ""
-  liftIO $ putStrLn "*** RUNNING IDEAL WORLD ***"
-  t2 <- runRandReplay bits $ execUC
-             testEnvACastBrokenReliability
-             (idealProtocol)
-             (runAsyncFToken fACast envToken advToken)
-             (runTokenA $ simACastBroken $ prot ())
-  return (t1 == t2)
 
-testCompareBrokenReliabilityNoToken :: IO Bool
-testCompareBrokenReliabilityNoToken = runITMinIO 120 $ do
+testCompareBrokenReliability :: IO Bool
+testCompareBrokenReliability = runITMinIO 120 $ do
   let variantT = ACastTSmall
   let variantR = ACastRCorrect
   let variantD = ACastDCorrect
@@ -1042,9 +1026,6 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
            return ()
 
   sendAdvance <- newIORef False
-  initDelay <- newIORef True
-  writeChan a2f (Left (ClockA2F_Delay 1))
-  printAdv $ "adversary initialize delays"
 
   fork $ forever $ do
     mf <- readChan f2a
@@ -1052,23 +1033,22 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
     case mf of
       (Left (ClockF2A_Leaks _)) -> writeChan f2aLeak mf
       (Left (ClockF2A_Advance)) -> do
-        printAdv $ "adversary delays advance"
-        writeIORef sendAdvance True
         tks <- ?getToken
         printAdv $ "adversary has " ++ (show tks) ++ " tokens"
-        writeChan a2f (Left (ClockA2F_Delay 1))
+        if tks> 1 then do
+          printAdv $ "adversary delays advance"
+          writeIORef sendAdvance True
+          writeChan a2f (Left (ClockA2F_Delay 1))
+        else
+          writeChan sbxz2f ClockZ2F_MakeProgress
       (Left (ClockF2A_Pass)) -> do
         adv <- readIORef sendAdvance
-        ini <- readIORef initDelay
-        if ini then
-          writeIORef initDelay False
-        else do
-          if adv then do
-            -- Suppress results from the simulator's extra delay
-            writeIORef sendAdvance False
-            writeChan sbxz2f ClockZ2F_MakeProgress
-          else
-            writeChan a2z $ SttCruptA2Z_F2A (Left (ClockF2A_Pass))
+        if adv then do
+          -- Suppress results from the simulator's extra delay
+          writeIORef sendAdvance False
+          writeChan sbxz2f ClockZ2F_MakeProgress
+        else
+          writeChan a2z $ SttCruptA2Z_F2A (Left (ClockF2A_Pass))
 
   -- Only process the new bulletin board entries since last time
   syncLeaks <- makeSyncLog handleLeak $ do

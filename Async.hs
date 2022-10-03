@@ -127,6 +127,7 @@ runAsyncF f (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   let _eventually m = do
         c :: Chan () <- newChan
         modifyIORef runqueue (++ [c])
+        modifyIORef delay (+1)
         l <- (readIORef runqueue >>= return . length)
         liftIO $ putStrLn $ "Runqueue size: " ++ show l 
         fork $ readChan c >> m
@@ -156,115 +157,6 @@ runAsyncF f (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
       else do
           writeChan f2a $ (Left $ ClockF2A_Advance)
           --error "underflow"
-
-  let ?eventually = _eventually; ?leak = _leak in
-    f (p2f', f2p) (a2f', f2a') (z2f', f2z)
-  return ()
-
-runAsyncFToken :: MonadFunctionality m =>
-             (MonadFunctionalityAsync m l => Functionality p2f f2p a2f f2a Void Void m) -> Int -> Int
-          -> Functionality (ClockP2F p2f) f2p (Either ClockA2F a2f) (Either (ClockF2A l) f2a) ClockZ2F Void m
-runAsyncFToken f et at (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
-
-  -- Store state for the leakage buffer
-  leaks <- newIORef []
-
-  -- how to handle "leak"
-  let _leak l = do
-        modifyIORef leaks (++ [(l)])
-        return ()
-
-  -- Store state for the clock
-  runqueue <- newIORef []
-
-  delay <- newIORef 0
-  envToken <- newIORef et
-  advToken <- newIORef at
-
-  a2f' <- newChan
-  f2a' <- wrapWrite Right f2a
-  z2f' <- newChan
-
-  -- Allow protocols to pass
-  p2f' <- newChan
-  fork $ forever $ do
-    mf <- readChan p2f
-    case mf of
-        (_, ClockP2F_Pass) -> writeChan f2a $ Left ClockF2A_Pass
-        (pid, ClockP2F_Through m) -> writeChan p2f' (pid, m)
-
-  -- Adversary can query the current state, and deliver messages early
-  fork $ forever $ do
-    mf <- readChan a2f
-    case mf of
-      Left ClockA2F_GetCount -> do
-        r <- readIORef runqueue
-        writeChan f2a $ (Left $ ClockF2A_Count (length r))
-      Left ClockA2F_GetLeaks -> do
-        l <- readIORef leaks
-        writeChan f2a $ (Left $ ClockF2A_Leaks l)
-      Left (ClockA2F_Deliver idx) -> do
-                     advt <- readIORef advToken
-                     if advt > 0 then do
-                       writeIORef advToken (advt-1)
-                       q <- readIORef runqueue
-                       liftIO $ putStrLn $ "Queue Size: " ++ (show (length q))
-                       if (length q) > idx then do
-                         modifyIORef runqueue (deleteNth idx)
-                         writeChan (q !! idx) ()
-                       else
-                         ?pass
-                     else
-                       writeChan f2a $ Left ClockF2A_Pass
-      Left (ClockA2F_Delay rounds) -> do
-                     advt <- readIORef advToken
-                     if rounds > 0 && advt >= rounds then do
-                       writeIORef advToken (advt-rounds)
-                       dl <- readIORef delay
-                       writeIORef delay (dl+rounds)
-                       liftIO $ putStrLn $ "New delay: " ++ (show (dl+rounds))
-                     else
-                       return()
-                     writeChan f2a $ Left ClockF2A_Pass
-      Right msg -> writeChan a2f' msg
-
-  --  how to handle "eventually"
-  let _eventually m = do
-        c :: Chan () <- newChan
-        modifyIORef runqueue (++ [c])
-        l <- (readIORef runqueue >>= return . length)
-        liftIO $ putStrLn $ "Runqueue size: " ++ show l
-        fork $ readChan c >> m
-        return ()
-
-  -- TODO: add the "delay" option to the environment
-
-  -- Allow the environment to force progress along
-  fork $ forever $ do
-    ClockZ2F_MakeProgress <- readChan z2f
-    envt <- readIORef envToken
-    if envt > 0 then do
-      writeIORef envToken (envt-1)
-      liftIO $ putStrLn $ "[fAsync] MakeProgress"
-      rq <- readIORef runqueue
-      dl <- readIORef delay
-      liftIO $ putStrLn $ "[fAsync] current delay: " ++ show dl
-      if dl > 0 then do
-        writeIORef delay (dl-1)
-        liftIO $ putStrLn $ "[fAsync] new delay: " ++ show (dl-1)
-        writeChan f2a $ Left ClockF2A_Advance
-        -- ?pass
-      else do
-        if length rq > 0 then do
-            -- Deliver the first message, remove it from buffer
-            liftIO $ putStrLn $ "Queue Size: " ++ (show (length rq))
-            modifyIORef runqueue (deleteNth 0)
-            liftIO $ putStrLn $ "[fAsync] sending callback"
-            writeChan (rq !! 0) ()
-        else do
-            writeChan f2a $ (Left $ ClockF2A_Advance)
-            --error "underflow"
-    else writeChan f2a $ (Left $ ClockF2A_Advance)
 
   let ?eventually = _eventually; ?leak = _leak in
     f (p2f', f2p) (a2f', f2a') (z2f', f2z)
