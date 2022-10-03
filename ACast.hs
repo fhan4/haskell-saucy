@@ -9,6 +9,7 @@ import StaticCorruptions
 import Async
 import Multisession
 import Multicast
+import TokenWrapper
 
 import Safe
 import Control.Concurrent.MonadIO
@@ -631,8 +632,8 @@ testEnvACastBrokenReliability
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) (ClockP2F (ACastP2F String))
      (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID,ACastMsg String)) (SID, MulticastF2A (ACastMsg String))))
-     (SttCruptZ2A (ClockP2F (SID, ACastMsg String)) (Either ClockA2F (SID, MulticastA2F (ACastMsg String)))) Void
-     (ClockZ2F) Transcript m
+     (SttCruptZ2A (ClockP2F (SID, ACastMsg String)) (Either ClockA2F (SID, MulticastA2F (ACastMsg String))))
+     Void (ClockZ2F) Transcript m
 testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   let extendRight conf = show ("", conf)
   let sid = ("sidTestACast", show ("Alice", ["Alice", "Bob", "Carol", "Dave"], 1::Integer, ""))
@@ -674,6 +675,9 @@ testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
         ?pass
       _ -> error $ "Help!" ++ show mb
 
+  forMseq_ [1..24] $ \x -> do
+      () <- readChan pump
+      writeChan z2a SttCruptZ2A_TokenSend
 
   () <- readChan pump
   writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Bob" (ACast_VAL "1"))
@@ -728,7 +732,7 @@ testCompareBrokenAgreement = runITMinIO 120 $ do
              testEnvACastBrokenAgreement
              (runAsyncP $ prot ())
              (runAsyncF $ bangFAsync fMulticast)
-             dummyAdversary
+             (runTokenA dummyAdversaryToken)
   let (t1, bits) = t1R
   liftIO $ putStrLn ""
   liftIO $ putStrLn ""
@@ -737,7 +741,7 @@ testCompareBrokenAgreement = runITMinIO 120 $ do
              testEnvACastBrokenAgreement
              (idealProtocol)
              (runAsyncF $ fACast)
-             (simACastBroken $ prot ())
+             (runTokenA $ simACastBroken $ prot ())
   return (t1 == t2)
 
 testCompareBrokenReliability :: Int -> Int -> IO Bool
@@ -751,7 +755,7 @@ testCompareBrokenReliability envToken advToken = runITMinIO 120 $ do
              testEnvACastBrokenReliability
              (runAsyncP $ prot ())
              (runAsyncFToken (bangFAsync fMulticast) envToken advToken)
-             dummyAdversary
+             (runTokenA dummyAdversaryToken)
   let (t1, bits) = t1R
   liftIO $ putStrLn ""
   liftIO $ putStrLn ""
@@ -760,7 +764,7 @@ testCompareBrokenReliability envToken advToken = runITMinIO 120 $ do
              testEnvACastBrokenReliability
              (idealProtocol)
              (runAsyncFToken fACast envToken advToken)
-             (simACastBroken $ prot ())
+             (runTokenA $ simACastBroken $ prot ())
   return (t1 == t2)
 
 testCompareBrokenReliabilityNoToken :: IO Bool
@@ -774,7 +778,7 @@ testCompareBrokenReliabilityNoToken = runITMinIO 120 $ do
              testEnvACastBrokenReliability
              (runAsyncP $ prot ())
              (runAsyncF $ bangFAsync fMulticast)
-             dummyAdversary
+             (runTokenA dummyAdversaryToken)
   let (t1, bits) = t1R
   liftIO $ putStrLn ""
   liftIO $ putStrLn ""
@@ -783,7 +787,7 @@ testCompareBrokenReliabilityNoToken = runITMinIO 120 $ do
              testEnvACastBrokenReliability
              (idealProtocol)
              (runAsyncF fACast)
-             (simACastBroken $ prot ())
+             (runTokenA $ simACastBroken $ prot ())
   return (t1 == t2)
 
 testCompareBrokenValidity :: IO Bool
@@ -797,7 +801,7 @@ testCompareBrokenValidity = runITMinIO 120 $ do
              testEnvACastBrokenValidity
              (runAsyncP $ prot ())
              (runAsyncF $ bangFAsync fMulticast)
-             dummyAdversary
+             (runTokenA dummyAdversaryToken)
   let (t1, bits) = t1R
   liftIO $ putStrLn ""
   liftIO $ putStrLn ""
@@ -806,7 +810,7 @@ testCompareBrokenValidity = runITMinIO 120 $ do
              testEnvACastBrokenValidity
              (idealProtocol)
              (runAsyncF $ fACast)
-             (simACastBroken $ prot ())
+             (runTokenA $ simACastBroken $ prot ())
   return (t1 == t2)
 
 {-- TODO: This is duplicated in MPC2.hs, fix it --}
@@ -945,17 +949,17 @@ simACast (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
       return ()
   return ()
 
-simACastBroken :: MonadAdversary m => (MonadProtocol m => Protocol (ClockP2F (ACastP2F String)) (ACastF2P String)
-                                                                   (SID, MulticastF2P (ACastMsg String))
-                                                                   (SID, ACastMsg String) m) ->
-                                      Adversary (SttCruptZ2A (ClockP2F (SID, ACastMsg String))
-                                                (Either (ClockA2F)
-                                                        (SID, MulticastA2F (ACastMsg String))))
-                                          (SttCruptA2Z (SID, MulticastF2P (ACastMsg String))
-                                                (Either (ClockF2A  (SID, ACastMsg String))
-                                                        (SID, MulticastF2A (ACastMsg String))))
-                                          (ACastF2P String) (ClockP2F (ACastP2F String))
-                                          (Either (ClockF2A String) Void) (Either ClockA2F Void) m
+simACastBroken :: MonadAdversaryToken m => (MonadProtocol m => Protocol (ClockP2F (ACastP2F String)) (ACastF2P String)
+                                                                        (SID, MulticastF2P (ACastMsg String))
+                                                                        (SID, ACastMsg String) m) ->
+                                           Adversary (SttCruptZ2A (ClockP2F (SID, ACastMsg String))
+                                                     (Either (ClockA2F)
+                                                             (SID, MulticastA2F (ACastMsg String))))
+                                               (SttCruptA2Z (SID, MulticastF2P (ACastMsg String))
+                                                     (Either (ClockF2A  (SID, ACastMsg String))
+                                                             (SID, MulticastF2A (ACastMsg String))))
+                                               (ACastF2P String) (ClockP2F (ACastP2F String))
+                                               (Either (ClockF2A String) Void) (Either ClockA2F Void) m
 simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
     -- Sender and set of parties is encoded in SID
   let (pidS :: PID, parties :: [PID], t :: Int, sssid :: String) = readNote "protACast" $ snd ?sid
@@ -1050,6 +1054,8 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
       (Left (ClockF2A_Advance)) -> do
         printAdv $ "adversary delays advance"
         writeIORef sendAdvance True
+        tks <- ?getToken
+        printAdv $ "adversary has " ++ (show tks) ++ " tokens"
         writeChan a2f (Left (ClockA2F_Delay 1))
       (Left (ClockF2A_Pass)) -> do
         adv <- readIORef sendAdvance
