@@ -491,7 +491,7 @@ testEnvACastBrokenValidity
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) (ClockP2F (ACastP2F String))
      (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID,ACastMsg String)) (SID, MulticastF2A (ACastMsg String))))
-     (SttCruptZ2A (ClockP2F (SID, ACastMsg String)) (Either ClockA2F (SID, MulticastA2F (ACastMsg String)))) Void
+     ((SttCruptZ2A (ClockP2F (SID, ACastMsg String)) (Either ClockA2F (SID, MulticastA2F (ACastMsg String)))), Carry_Tokens Int) Void
      (ClockZ2F) Transcript m
 testEnvACastBrokenValidity z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   let extendRight conf = show ("", conf)
@@ -530,25 +530,21 @@ testEnvACastBrokenValidity z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
         ?pass
       _ -> error $ "Help!" ++ show mb
 
-  forMseq_ [1..24] $ \x -> do
-      () <- readChan pump
-      writeChan z2a SttCruptZ2A_TokenSend
-
   () <- readChan pump
   writeChan z2p ("Alice", ClockP2F_Through $ ACastP2F_Input "1")
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Left ClockA2F_GetLeaks
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetLeaks), Send_Tokens 24)
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidDave1, MulticastA2F_Deliver "Bob" (ACast_ECHO "2"))
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidDave1, MulticastA2F_Deliver "Bob" (ACast_ECHO "2"))), Send_Tokens 0)
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidDave2, MulticastA2F_Deliver "Bob" (ACast_READY "2"))
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidDave2, MulticastA2F_Deliver "Bob" (ACast_READY "2"))), Send_Tokens 0)
 
   forMseq_ [1..15] $ \x -> do
       () <- readChan pump
-      writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver 0)
+      writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver 0)), Send_Tokens 0)
 
   -- Output is the transcript
   () <- readChan pump
@@ -558,7 +554,7 @@ testEnvACastBrokenAgreement
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) (ClockP2F (ACastP2F String))
      (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID,ACastMsg String)) (SID, MulticastF2A (ACastMsg String))))
-     (SttCruptZ2A (ClockP2F (SID, ACastMsg String)) (Either ClockA2F (SID, MulticastA2F (ACastMsg String)))) Void
+     ((SttCruptZ2A (ClockP2F (SID, ACastMsg String)) (Either ClockA2F (SID, MulticastA2F (ACastMsg String)))), Carry_Tokens Int) Void
      (ClockZ2F) Transcript m
 testEnvACastBrokenAgreement z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   let extendRight conf = show ("", conf)
@@ -601,34 +597,30 @@ testEnvACastBrokenAgreement z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = 
         ?pass
       _ -> error $ "Help!" ++ show mb
 
-  forMseq_ [1..24] $ \x -> do
-      () <- readChan pump
-      writeChan z2a SttCruptZ2A_TokenSend
+  () <- readChan pump
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Bob" (ACast_VAL "1"))), Send_Tokens 24)
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Bob" (ACast_VAL "1"))
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Carol" (ACast_VAL "2"))), Send_Tokens 0)
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Carol" (ACast_VAL "2"))
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetLeaks), Send_Tokens 0)
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Left ClockA2F_GetLeaks
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice2, MulticastA2F_Deliver "Carol" (ACast_ECHO "2"))), Send_Tokens 0)
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice2, MulticastA2F_Deliver "Carol" (ACast_ECHO "2"))
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice2, MulticastA2F_Deliver "Dave" (ACast_ECHO "1"))), Send_Tokens 0)
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice2, MulticastA2F_Deliver "Dave" (ACast_ECHO "1"))
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice3, MulticastA2F_Deliver "Bob" (ACast_READY "1"))), Send_Tokens 0)
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice3, MulticastA2F_Deliver "Bob" (ACast_READY "1"))
-
-  () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice3, MulticastA2F_Deliver "Carol" (ACast_READY "2"))
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice3, MulticastA2F_Deliver "Carol" (ACast_READY "2"))), Send_Tokens 0)
 
   forMseq_ [1..20] $ \x -> do
       () <- readChan pump
-      writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver 0)
+      writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver 0)), Send_Tokens 0)
 
   -- Output is the transcript
   () <- readChan pump
@@ -638,7 +630,7 @@ testEnvACastBrokenReliability
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) (ClockP2F (ACastP2F String))
      (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID,ACastMsg String)) (SID, MulticastF2A (ACastMsg String))))
-     (SttCruptZ2A (ClockP2F (SID, ACastMsg String)) (Either ClockA2F (SID, MulticastA2F (ACastMsg String))))
+     ((SttCruptZ2A (ClockP2F (SID, ACastMsg String)) (Either ClockA2F (SID, MulticastA2F (ACastMsg String)))), Carry_Tokens Int)
      Void (ClockZ2F) Transcript m
 testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   let extendRight conf = show ("", conf)
@@ -681,37 +673,33 @@ testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
         ?pass
       _ -> error $ "Help!" ++ show mb
 
-  forMseq_ [1..25] $ \x -> do
-      () <- readChan pump
-      writeChan z2a SttCruptZ2A_TokenSend
+  () <- readChan pump
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Bob" (ACast_VAL "1"))), Send_Tokens 25)
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Bob" (ACast_VAL "1"))
-
-  () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Carol" (ACast_VAL "2"))
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Carol" (ACast_VAL "2"))), Send_Tokens 0)
 
   () <- readChan pump 
-  writeChan z2a $ SttCruptZ2A_A2F $ Left ClockA2F_GetLeaks
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetLeaks), Send_Tokens 0)
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice2, MulticastA2F_Deliver "Carol" (ACast_ECHO "2"))
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice2, MulticastA2F_Deliver "Carol" (ACast_ECHO "2"))), Send_Tokens 0)
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice2, MulticastA2F_Deliver "Dave" (ACast_ECHO "1"))
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice2, MulticastA2F_Deliver "Dave" (ACast_ECHO "1"))), Send_Tokens 0)
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice3, MulticastA2F_Deliver "Bob" (ACast_READY "1"))
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice3, MulticastA2F_Deliver "Bob" (ACast_READY "1"))), Send_Tokens 0)
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice3, MulticastA2F_Deliver "Carol" (ACast_READY "2"))
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice3, MulticastA2F_Deliver "Carol" (ACast_READY "2"))), Send_Tokens 0)
 
   forMseq_ [1..20] $ \x -> do
       () <- readChan pump
       writeChan z2f ClockZ2F_MakeProgress
 
   () <- readChan pump
-  writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Delay 2)
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Delay 2)), Send_Tokens 0)
   forMseq_ [1..24] $ \x -> do
       () <- readChan pump
       writeChan z2f ClockZ2F_MakeProgress
@@ -725,7 +713,7 @@ testACastBroken = runITMinIO 120 $ execUC
   testEnvACastBrokenAgreement
   (runAsyncP $ protACastBroken ACastTSmall ACastRCorrect ACastDSmall)
   (runAsyncF $ bangFAsync fMulticast)
-  dummyAdversary
+  (runTokenA dummyAdversaryToken)
 
 testCompareBrokenAgreement :: IO Bool
 testCompareBrokenAgreement = runITMinIO 120 $ do
@@ -936,9 +924,9 @@ simACast (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
 simACastBroken :: MonadAdversaryToken m => (MonadProtocol m => Protocol (ClockP2F (ACastP2F String)) (ACastF2P String)
                                                                         (SID, MulticastF2P (ACastMsg String))
                                                                         (SID, ACastMsg String) m) ->
-                                           Adversary (SttCruptZ2A (ClockP2F (SID, ACastMsg String))
+                                           Adversary ((SttCruptZ2A (ClockP2F (SID, ACastMsg String))
                                                      (Either (ClockA2F)
-                                                             (SID, MulticastA2F (ACastMsg String))))
+                                                             (SID, MulticastA2F (ACastMsg String)))), Carry_Tokens Int)
                                                (SttCruptA2Z (SID, MulticastF2P (ACastMsg String))
                                                      (Either (ClockF2A  (SID, ACastMsg String))
                                                              (SID, MulticastF2A (ACastMsg String))))
@@ -1061,7 +1049,7 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
         -- The sandbox adversary poses as the dummy adversary, but takes every
         -- activation opportunity to synchronize with the ideal world functionality
         fork $ forever $ do
-          mf <- readChan z2a'
+          (mf, Send_Tokens _) <- readChan z2a'
           printAdv $ show "Intercepted z2a'" ++ show mf
           syncLeaks
           printAdv $ "forwarding into to sandbox"
@@ -1082,7 +1070,7 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
   -- sandbox simulation.
   mf <- selectRead z2a f2a   -- TODO: could there be a P2A here?
 
-  fork $ execUC_ sbxEnv (runAsyncP sbxProt) (runAsyncF (sbxBullRand ())) sbxAdv
+  fork $ execUC_ sbxEnv (runAsyncP sbxProt) (runAsyncF (sbxBullRand ())) (runTokenA sbxAdv)
   () <- readChan sbxpump
 
   -- After initializing, the sbxAdv is now listening on z2a,f2a,p2a. So this passes to those
