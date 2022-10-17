@@ -19,6 +19,8 @@ import Data.Map.Strict (member, empty, insert, Map)
 import qualified Data.Map.Strict as Map
 
 
+data Carry_Tokens a = Send_Tokens a deriving Show
+
 
 type MonadAdversaryToken m = (MonadAdversary m,
                               -- ?sendToken :: m () -> m (),
@@ -33,8 +35,8 @@ getToken = ?getToken
 
 
 runTokenA :: MonadAdversary m =>
-          (MonadAdversaryToken m => Adversary (SttCruptZ2A a b) a2z p2a a2p f2a (Either ClockA2F a2f) m)
-          -> Adversary (SttCruptZ2A a b) a2z p2a a2p f2a (Either ClockA2F a2f) m
+          (MonadAdversaryToken m => Adversary (b, Carry_Tokens Int) a2z p2a a2p f2a (Either ClockA2F a2f) m)
+          -> Adversary (b, Carry_Tokens Int) a2z p2a a2p f2a (Either ClockA2F a2f) m
 runTokenA a (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
 
   tokens <- newIORef 0
@@ -43,12 +45,13 @@ runTokenA a (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
   a2f' <- newChan
 
   fork $ forever $ do
-    mf <- readChan z2a
-    case mf of
-      SttCruptZ2A_TokenSend -> do
-        modifyIORef tokens (+1)
-        ?pass
-      _ -> writeChan z2a' mf
+    (mf, Send_Tokens a) <- readChan z2a
+    if a>=0 then do
+      tk <- readIORef tokens
+      writeIORef tokens (tk+a)
+    else
+      error "sending negative tokens"
+    writeChan z2a' (mf, Send_Tokens a)
 
   fork $ forever $ do
     mf <- readChan a2f'
@@ -79,5 +82,12 @@ runTokenA a (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
     a (z2a', a2z) (p2a, a2p) (f2a, a2f')
   return ()
 
-dummyAdversaryToken :: MonadAdversaryToken m => Adversary (SttCruptZ2A b d) (SttCruptA2Z a c) a b c d m
-dummyAdversaryToken (z2a, a2z) (p2a, a2p) (f2a, a2f) = dummyAdversary (z2a, a2z) (p2a, a2p) (f2a, a2f)
+dummyAdversaryToken :: MonadAdversaryToken m => Adversary ((SttCruptZ2A b d), Carry_Tokens Int) (SttCruptA2Z a c) a b c d m
+dummyAdversaryToken (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
+  fork $ forever $ readChan z2a >>= \mf ->
+      case mf of
+        ((SttCruptZ2A_A2F b), Send_Tokens _)        -> writeChan a2f b
+        ((SttCruptZ2A_A2P (pid, m)), Send_Tokens _) -> writeChan a2p (pid, m)
+  fork $ forever $ readChan f2a >>= writeChan a2z . SttCruptA2Z_F2A
+  fork $ forever $ readChan p2a >>= writeChan a2z . SttCruptA2Z_P2A
+  return ()
