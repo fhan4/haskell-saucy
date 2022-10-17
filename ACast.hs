@@ -674,7 +674,7 @@ testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
       _ -> error $ "Help!" ++ show mb
 
   () <- readChan pump
-  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Bob" (ACast_VAL "1"))), Send_Tokens 25)
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Bob" (ACast_VAL "1"))), Send_Tokens 41)
 
   () <- readChan pump
   writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Carol" (ACast_VAL "2"))), Send_Tokens 0)
@@ -700,7 +700,7 @@ testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
 
   () <- readChan pump
   writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Delay 2)), Send_Tokens 0)
-  forMseq_ [1..24] $ \x -> do
+  forMseq_ [1..25] $ \x -> do
       () <- readChan pump
       writeChan z2f ClockZ2F_MakeProgress
 
@@ -998,8 +998,12 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
           return ()
         else
           return ()
-        liftIO $ putStrLn $ "delivered: " ++ pid ++ "," ++ show idx
-        writeChan a2f $ Left $ ClockA2F_Deliver idx
+        tks <- ?getToken
+        if tks>= 1 then do
+          liftIO $ putStrLn $ "delivered: " ++ pid ++ "," ++ show idx
+          writeChan a2f $ Left $ ClockA2F_Deliver idx
+        else
+          ?pass
 
   let handleLeak m = do
          printAdv $ "handleLeak simulator"
@@ -1023,7 +1027,7 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
       (Left (ClockF2A_Advance)) -> do
         tks <- ?getToken
         printAdv $ "adversary has " ++ (show tks) ++ " tokens"
-        if tks> 1 then do
+        if tks>= 1 then do
           printAdv $ "adversary delays advance"
           writeIORef sendAdvance True
           writeChan a2f (Left (ClockA2F_Delay 1))
