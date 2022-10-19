@@ -62,7 +62,7 @@ fACast (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
 
   writeChan f2p (pidS, ACastF2P_OK)
 
-fACastToken :: MonadFunctionalityAsync m a => Functionality ((ACastP2F a), Carry_Tokens Int) (ACastF2P a) Void Void Void Void m
+fACastToken :: MonadFunctionalityAsync m (a, Carry_Tokens Int) => Functionality ((ACastP2F a), Carry_Tokens Int) (ACastF2P a) Void Void Void Void m
 fACastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   -- Sender, set of parties, and tolerance parameter is encoded in SID
   let (pidS :: PID, parties :: [PID], t :: Int, sssid :: String) = readNote "fACast" $ snd ?sid
@@ -73,18 +73,31 @@ fACastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   require (Map.size ?crupt <= t) "Fault tolerance assumption violated"
   require (3*t < n) "Invalid fault tolerance parameter (must be 3t<n)"
 
+  tokens <- newIORef 0
+
   -- Allow sender to choose the input
-  (pid, ((ACastP2F_Input m), Send_Tokens _)) <- readChan p2f
+  (pid, ((ACastP2F_Input m), Send_Tokens a)) <- readChan p2f
+  if a>=0 then do
+    tk <- readIORef tokens
+    writeIORef tokens (tk+a)
+  else
+    error "sending negative tokens"
   liftIO $ putStrLn $ "[fACast]: input read " -- ++ show m
-  leak m
+  liftIO $ putStrLn $ "[fACast]: received " ++ (show a) ++ " tokens from " ++ (show pid)
+  leak (m, Send_Tokens a)
   require (pid == pidS) "Messages not from sender are ignored"
 
   -- Every honest party eventually receives an output
   forMseq_ parties $ \pj -> do
     if not (Map.member pj ?crupt) then do
-      eventually $ do
-        liftIO $ putStrLn $ "Queued party: " ++ (show pj)
-        writeChan f2p (pj, ACastF2P_Deliver m)
+      tk <- readIORef tokens
+      if tk >=1 then do
+        writeIORef tokens (tk-1)
+        liftIO $ putStrLn $ "[fACast]: tokens left: " ++ (show (tk-1))
+        eventually $ do
+          liftIO $ putStrLn $ "[fACast]: queued party: " ++ (show pj)
+          writeChan f2p (pj, ACastF2P_Deliver m)
+      else return()
     else do
       return()
 
@@ -190,14 +203,14 @@ type Transcript = [Either
                          (SttCruptA2Z
                             (SID, MulticastF2P (ACastMsg String))
                             (Either
-                               (ClockF2A (SID, ACastMsg String))
+                               (ClockF2A (SID, (ACastMsg String, Carry_Tokens Int)))
                                (SID, MulticastF2A (ACastMsg String))))
                          (PID, ACastF2P String)]
 
 testEnvACast
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) ((ClockP2F (ACastP2F String)), Carry_Tokens Int)
-     (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID,ACastMsg String)) (SID, MulticastF2A (ACastMsg String))))
+     (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID,(ACastMsg String, Carry_Tokens Int))) (SID, MulticastF2A (ACastMsg String))))
      ((SttCruptZ2A (ClockP2F (SID, (ACastMsg String, Carry_Tokens Int))) (Either ClockA2F (SID, MulticastA2F (ACastMsg String)))), Carry_Tokens Int) Void
      (ClockZ2F) Transcript m
 testEnvACast z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
@@ -232,7 +245,7 @@ testEnvACast z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
 
 
   -- Have Alice write a message
-  () <- readChan pump 
+  () <- readChan pump
   writeChan z2p ("Alice", ((ClockP2F_Through $ ACastP2F_Input "I'm Alice"), Send_Tokens 1000))
 
   -- Empty the queue
@@ -289,6 +302,7 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
   decided <- newIORef False
   echoes <- newIORef (Map.empty :: Map String (Map PID ()))
   readys <- newIORef (Map.empty :: Map String (Map PID ()))
+  tokens <- newIORef 0
 
   -- Require means print the error then pass
   let require cond msg = 
@@ -301,7 +315,9 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
   -- Prepare channels
   (recvC, multicastC, cOK) <- manyMulticast ?pid parties (f2p, p2f)
   let multicast x = do
-        writeChan multicastC (x, Send_Tokens 0)
+        tk <- readIORef tokens
+        writeIORef tokens (max 0 (tk-(length parties)))
+        writeChan multicastC (x, Send_Tokens (min tk (length parties)))
         readChan cOK
   let recv = readChan recvC -- :: m (ACastMsg t)
 
@@ -317,7 +333,13 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
 
   -- Sender provides input
   fork $ do
-    (mf, Send_Tokens _) <- readChan z2p
+    (mf, Send_Tokens a) <- readChan z2p
+    if a>=0 then do
+      tk <- readIORef tokens
+      writeIORef tokens (tk+a)
+    else
+      error "sending negative tokens"
+    liftIO $ putStrLn $ (show ?pid) ++ " received " ++ (show a) ++ " tokens from Z"
     case mf of
        ClockP2F_Pass -> ?pass
        ClockP2F_Through (ACastP2F_Input m) -> do
@@ -411,7 +433,7 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
 testEnvACastBrokenValidity
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) ((ClockP2F (ACastP2F String)), Carry_Tokens Int)
-     (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID,ACastMsg String)) (SID, MulticastF2A (ACastMsg String))))
+     (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID,(ACastMsg String, Carry_Tokens Int))) (SID, MulticastF2A (ACastMsg String))))
      ((SttCruptZ2A (ClockP2F (SID, (ACastMsg String, Carry_Tokens Int))) (Either ClockA2F (SID, MulticastA2F (ACastMsg String)))), Carry_Tokens Int) Void
      (ClockZ2F) Transcript m
 testEnvACastBrokenValidity z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
@@ -452,7 +474,13 @@ testEnvACastBrokenValidity z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
       _ -> error $ "Help!" ++ show mb
 
   () <- readChan pump
-  writeChan z2p ("Alice", ((ClockP2F_Through $ ACastP2F_Input "1"), Send_Tokens 0))
+  writeChan z2p ("Alice", ((ClockP2F_Through $ ACastP2F_Input "1"), Send_Tokens 100))
+
+  () <- readChan pump
+  writeChan z2p ("Bob", (ClockP2F_Pass, Send_Tokens 100))
+
+  () <- readChan pump
+  writeChan z2p ("Carol", (ClockP2F_Pass, Send_Tokens 100))
 
   () <- readChan pump
   writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetLeaks), Send_Tokens 24)
@@ -474,7 +502,7 @@ testEnvACastBrokenValidity z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
 testEnvACastBrokenAgreement
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) ((ClockP2F (ACastP2F String)), Carry_Tokens Int)
-     (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID,ACastMsg String)) (SID, MulticastF2A (ACastMsg String))))
+     (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID,(ACastMsg String, Carry_Tokens Int))) (SID, MulticastF2A (ACastMsg String))))
      ((SttCruptZ2A (ClockP2F (SID, (ACastMsg String, Carry_Tokens Int))) (Either ClockA2F (SID, MulticastA2F (ACastMsg String)))), Carry_Tokens Int) Void
      (ClockZ2F) Transcript m
 testEnvACastBrokenAgreement z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
@@ -519,6 +547,15 @@ testEnvACastBrokenAgreement z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = 
       _ -> error $ "Help!" ++ show mb
 
   () <- readChan pump
+  writeChan z2p ("Bob", (ClockP2F_Pass, Send_Tokens 100))
+
+  () <- readChan pump
+  writeChan z2p ("Carol", (ClockP2F_Pass, Send_Tokens 100))
+
+  () <- readChan pump
+  writeChan z2p ("Dave", (ClockP2F_Pass, Send_Tokens 100))
+
+  () <- readChan pump
   writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Bob" (ACast_VAL "1"))), Send_Tokens 24)
 
   () <- readChan pump
@@ -550,7 +587,7 @@ testEnvACastBrokenAgreement z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = 
 testEnvACastBrokenReliability
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) ((ClockP2F (ACastP2F String)), Carry_Tokens Int)
-     (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID,ACastMsg String)) (SID, MulticastF2A (ACastMsg String))))
+     (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID,(ACastMsg String, Carry_Tokens Int))) (SID, MulticastF2A (ACastMsg String))))
      ((SttCruptZ2A (ClockP2F (SID, (ACastMsg String, Carry_Tokens Int))) (Either ClockA2F (SID, MulticastA2F (ACastMsg String)))), Carry_Tokens Int)
      Void (ClockZ2F) Transcript m
 testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
@@ -593,6 +630,15 @@ testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
         printEnvReal $ "Forced Clock Advance"
         ?pass
       _ -> error $ "Help!" ++ show mb
+
+  () <- readChan pump
+  writeChan z2p ("Bob", (ClockP2F_Pass, Send_Tokens 100))
+
+  () <- readChan pump
+  writeChan z2p ("Carol", (ClockP2F_Pass, Send_Tokens 100))
+
+  () <- readChan pump
+  writeChan z2p ("Dave", (ClockP2F_Pass, Send_Tokens 100))
 
   () <- readChan pump
   writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Bob" (ACast_VAL "1"))), Send_Tokens 41)
@@ -729,10 +775,10 @@ simACastBroken :: MonadAdversaryToken m => (MonadProtocol m => Protocol ((ClockP
                                                      (Either (ClockA2F)
                                                              (SID, MulticastA2F (ACastMsg String)))), Carry_Tokens Int)
                                                (SttCruptA2Z (SID, MulticastF2P (ACastMsg String))
-                                                     (Either (ClockF2A  (SID, ACastMsg String))
+                                                     (Either (ClockF2A  (SID,(ACastMsg String, Carry_Tokens Int)))
                                                              (SID, MulticastF2A (ACastMsg String))))
                                                (ACastF2P String) (ClockP2F (ACastP2F String, Carry_Tokens Int))
-                                               (Either (ClockF2A String) Void) (Either ClockA2F Void) m
+                                               (Either (ClockF2A (String, Carry_Tokens Int)) Void) (Either ClockA2F Void) m
 simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
     -- Sender and set of parties is encoded in SID
   let (pidS :: PID, parties :: [PID], t :: Int, sssid :: String) = readNote "protACast" $ snd ?sid
@@ -793,7 +839,7 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
         isSet <- readIORef isFuncSetForCruptSender
         if isCruptSender && isSet == False then do
           liftIO $ putStrLn $ "setting up functionality in case of corrupt sender"
-          writeChan a2p (pidS, (ClockP2F_Through $ (ACastP2F_Input message, Send_Tokens 0)))
+          writeChan a2p (pidS, (ClockP2F_Through $ (ACastP2F_Input message, Send_Tokens 100)))
           (_,_) <- readChan p2a
           writeIORef isFuncSetForCruptSender True
           return ()
@@ -806,7 +852,7 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
         else
           ?pass
 
-  let handleLeak m = do
+  let handleLeak (m, Send_Tokens a) = do
          printAdv $ "handleLeak simulator"
          if isCruptSender then
            return ()
@@ -814,7 +860,7 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
            -- The input is provided to the ideal functionality.
            -- We initiate the input operation in the sandbox.
            -- writeIORef fInputWaiting (Just x)
-           writeChan sbxz2p (pidS, ((ClockP2F_Through $ ACastP2F_Input m), Send_Tokens 0))
+           writeChan sbxz2p (pidS, ((ClockP2F_Through $ ACastP2F_Input m), Send_Tokens a))
            () <- readChan chanOK
            return ()
 

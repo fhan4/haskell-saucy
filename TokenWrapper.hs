@@ -19,7 +19,7 @@ import Data.Map.Strict (member, empty, insert, Map)
 import qualified Data.Map.Strict as Map
 
 
-data Carry_Tokens a = Send_Tokens a deriving Show
+data Carry_Tokens a = Send_Tokens a deriving (Show, Eq)
 
 
 type MonadAdversaryToken m = (MonadAdversary m,
@@ -82,7 +82,7 @@ runTokenA a (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
     a (z2a', a2z) (p2a, a2p) (f2a, a2f')
   return ()
 
-dummyAdversaryToken :: MonadAdversaryToken m => Adversary ((SttCruptZ2A b d), Carry_Tokens Int) (SttCruptA2Z a c) a b c d m
+dummyAdversaryToken :: MonadAdversaryToken m => Adversary ((SttCruptZ2A b d), Carry_Tokens Int) (SttCruptA2Z a (Either (ClockF2A (SID, (c, Carry_Tokens Int))) f2a)) a b (Either (ClockF2A (SID, (c, Carry_Tokens Int))) f2a) d m
 dummyAdversaryToken (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
   fork $ forever $ readChan z2a >>= \mf ->
       case mf of
