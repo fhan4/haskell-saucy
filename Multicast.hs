@@ -7,6 +7,7 @@ import ProcessIO
 import StaticCorruptions
 import Multisession
 import Async
+import TokenWrapper
 
 import Safe
 import Control.Concurrent.MonadIO
@@ -54,6 +55,35 @@ fMulticast (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
            writeChan f2p (pidR, MulticastF2P_Deliver m)
   return ()
 
+fMulticastToken :: MonadFunctionalityAsync m t =>
+  Functionality (t, Carry_Tokens Int) (MulticastF2P t) (MulticastA2F t) (MulticastF2A t) Void Void m
+fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
+  -- Sender and set of parties is encoded in SID
+  let sid = ?sid :: SID
+  let (pidS :: PID, parties :: [PID], sssid :: String) = readNote "fMulticast" $ snd sid
+
+  if not $ member pidS ?crupt then
+      -- Only activated by the designated sender
+      fork $ forever $ do
+        (pid, (m, Send_Tokens _)) <- readChan p2f
+        liftIO $ putStrLn $ "\n\nreceived a message to be multicast\n\n"
+        if pid == pidS then do
+          ?leak m
+          forMseq_ parties $ \pidR -> do
+             eventually $ writeChan f2p (pidR, MulticastF2P_Deliver m)
+          writeChan f2p (pidS, MulticastF2P_OK)
+        else error "multicast activated not by sender"
+  else do
+      -- If sender is corrupted, arbitrary messages can be delivered (once) to parties in any order
+      delivered <- newIORef (empty :: Map PID ())
+      fork $ forever $ do
+         MulticastA2F_Deliver pidR m <- readChan a2f
+         del <- readIORef delivered
+         if member pidR del then return ()
+         else do
+           writeIORef delivered (insert pidR () del)
+           writeChan f2p (pidR, MulticastF2P_Deliver m)
+  return ()
 
 {-- An !fAuth hybrid protocol realizing fMulticast --}
 protMulticast :: MonadAsyncP m =>

@@ -91,3 +91,17 @@ dummyAdversaryToken (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
   fork $ forever $ readChan f2a >>= writeChan a2z . SttCruptA2Z_F2A
   fork $ forever $ readChan p2a >>= writeChan a2z . SttCruptA2Z_P2A
   return ()
+
+idealProtocolToken :: MonadProtocol m => Protocol (ClockP2F a, Carry_Tokens Int) b b (ClockP2F (a, Carry_Tokens Int)) m
+idealProtocolToken (z2p, p2z) (f2p, p2f) = do
+  fork $ forever $ do
+    mf <- readChan z2p
+    --liftIO $ putStrLn $ "idealProtocol received from z2p " ++ pid
+    case mf of
+      (ClockP2F_Pass, Send_Tokens _)       -> writeChan p2f ClockP2F_Pass
+      (ClockP2F_Through m, Send_Tokens tk) -> writeChan p2f (ClockP2F_Through (m, Send_Tokens tk))
+  fork $ forever $ do
+    m <- readChan f2p
+    --liftIO $ putStrLn $ "idealProtocol received from f2p " ++ pid
+    writeChan p2z m
+  return ()
