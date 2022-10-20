@@ -55,8 +55,8 @@ fMulticast (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
            writeChan f2p (pidR, MulticastF2P_Deliver m)
   return ()
 
-fMulticastToken :: MonadFunctionalityAsync m (t, Carry_Tokens Int) =>
-  Functionality (t, Carry_Tokens Int) (MulticastF2P t) (MulticastA2F t) (MulticastF2A t) Void Void m
+fMulticastToken :: MonadFunctionalityAsync m ((t, Carry_Tokens Int), Carry_Tokens Int) =>
+  Functionality ((t, Carry_Tokens Int), Carry_Tokens Int) (MulticastF2P (t, Carry_Tokens Int)) (MulticastA2F (t, Carry_Tokens Int)) (MulticastF2A (t, Carry_Tokens Int)) Void Void m
 fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   -- Sender and set of parties is encoded in SID
   let sid = ?sid :: SID
@@ -67,7 +67,7 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   if not $ member pidS ?crupt then
       -- Only activated by the designated sender
       fork $ forever $ do
-        (pid, (m, Send_Tokens a)) <- readChan p2f
+        (pid, ((m, Send_Tokens st), Send_Tokens a)) <- readChan p2f
         if a>=0 then do
           tk <- readIORef tokens
           writeIORef tokens (tk+a)
@@ -76,13 +76,13 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
         liftIO $ putStrLn $ "received " ++ (show a) ++ " tokens from " ++ (show pid)
         liftIO $ putStrLn $ "\n\nreceived a message to be multicast\n\n"
         if pid == pidS then do
-          ?leak (m, Send_Tokens a)
+          ?leak ((m, Send_Tokens st), Send_Tokens a)
           forMseq_ parties $ \pidR -> do
             tk <- readIORef tokens
             if tk >=1 then do
-              writeIORef tokens (tk-1)
-              liftIO $ putStrLn $ "tokens left: " ++ (show (tk-1))
-              eventually $ writeChan f2p (pidR, MulticastF2P_Deliver m)
+              writeIORef tokens (max 0 (tk-1-st))
+              liftIO $ putStrLn $ "tokens left: " ++ (show (max 0 (tk-1-st)))
+              eventually $ writeChan f2p (pidR, MulticastF2P_Deliver (m, Send_Tokens (min st (tk-1))))
             else return()
           writeChan f2p (pidS, MulticastF2P_OK)
         else error "multicast activated not by sender"
