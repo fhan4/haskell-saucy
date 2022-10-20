@@ -19,7 +19,8 @@ import Data.Map.Strict (member, empty, insert, Map)
 import qualified Data.Map.Strict as Map
 
 
-data Carry_Tokens a = Send_Tokens a deriving (Show, Eq)
+data CarryTokens a = SendTokens a deriving (Show, Eq)
+data TransferTokens a = DeliverTokensWithMessage a deriving (Show, Eq)
 
 
 type MonadAdversaryToken m = (MonadAdversary m,
@@ -35,8 +36,8 @@ getToken = ?getToken
 
 
 runTokenA :: MonadAdversary m =>
-          (MonadAdversaryToken m => Adversary (b, Carry_Tokens Int) a2z p2a a2p f2a (Either ClockA2F a2f) m)
-          -> Adversary (b, Carry_Tokens Int) a2z p2a a2p f2a (Either ClockA2F a2f) m
+          (MonadAdversaryToken m => Adversary (b, CarryTokens Int) a2z p2a a2p f2a (Either ClockA2F a2f) m)
+          -> Adversary (b, CarryTokens Int) a2z p2a a2p f2a (Either ClockA2F a2f) m
 runTokenA a (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
 
   tokens <- newIORef 0
@@ -45,13 +46,13 @@ runTokenA a (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
   a2f' <- newChan
 
   fork $ forever $ do
-    (mf, Send_Tokens a) <- readChan z2a
+    (mf, SendTokens a) <- readChan z2a
     if a>=0 then do
       tk <- readIORef tokens
       writeIORef tokens (tk+a)
     else
       error "sending negative tokens"
-    writeChan z2a' (mf, Send_Tokens a)
+    writeChan z2a' (mf, SendTokens a)
 
   fork $ forever $ do
     mf <- readChan a2f'
@@ -82,24 +83,26 @@ runTokenA a (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
     a (z2a', a2z) (p2a, a2p) (f2a, a2f')
   return ()
 
-dummyAdversaryToken :: MonadAdversaryToken m => Adversary ((SttCruptZ2A b d), Carry_Tokens Int) (SttCruptA2Z a (Either (ClockF2A (SID, (c, Carry_Tokens Int))) f2a)) a b (Either (ClockF2A (SID, (c, Carry_Tokens Int))) f2a) d m
+dummyAdversaryToken :: MonadAdversaryToken m => Adversary ((SttCruptZ2A b d), CarryTokens Int)
+                                                          (SttCruptA2Z a (Either (ClockF2A (SID, (c, CarryTokens Int))) f2a))
+                                                          a b (Either (ClockF2A (SID, (c, CarryTokens Int))) f2a) d m
 dummyAdversaryToken (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
   fork $ forever $ readChan z2a >>= \mf ->
       case mf of
-        ((SttCruptZ2A_A2F b), Send_Tokens _)        -> writeChan a2f b
-        ((SttCruptZ2A_A2P (pid, m)), Send_Tokens _) -> writeChan a2p (pid, m)
+        ((SttCruptZ2A_A2F b), SendTokens _)        -> writeChan a2f b
+        ((SttCruptZ2A_A2P (pid, m)), SendTokens _) -> writeChan a2p (pid, m)
   fork $ forever $ readChan f2a >>= writeChan a2z . SttCruptA2Z_F2A
   fork $ forever $ readChan p2a >>= writeChan a2z . SttCruptA2Z_P2A
   return ()
 
-idealProtocolToken :: MonadProtocol m => Protocol (ClockP2F a, Carry_Tokens Int) b b (ClockP2F (a, Carry_Tokens Int)) m
+idealProtocolToken :: MonadProtocol m => Protocol (ClockP2F a, CarryTokens Int) b b (ClockP2F (a, CarryTokens Int)) m
 idealProtocolToken (z2p, p2z) (f2p, p2f) = do
   fork $ forever $ do
     mf <- readChan z2p
     --liftIO $ putStrLn $ "idealProtocol received from z2p " ++ pid
     case mf of
-      (ClockP2F_Pass, Send_Tokens _)       -> writeChan p2f ClockP2F_Pass
-      (ClockP2F_Through m, Send_Tokens tk) -> writeChan p2f (ClockP2F_Through (m, Send_Tokens tk))
+      (ClockP2F_Pass, SendTokens _)       -> writeChan p2f ClockP2F_Pass
+      (ClockP2F_Through m, SendTokens tk) -> writeChan p2f (ClockP2F_Through (m, SendTokens tk))
   fork $ forever $ do
     m <- readChan f2p
     --liftIO $ putStrLn $ "idealProtocol received from f2p " ++ pid
