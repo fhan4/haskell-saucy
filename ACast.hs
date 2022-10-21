@@ -289,7 +289,7 @@ testACastReal = runITMinIO 120 $ execUC
   testEnvACast
   (runAsyncP $ protACastBroken ACastTCorrect ACastRCorrect ACastDCorrect)
   (runAsyncF $ bangFAsync fMulticastToken)
-  (runTokenA dummyAdversaryToken)
+  dummyAdversaryToken
 
 protACastBroken :: MonadAsyncP m => ACastTVariant -> ACastRVariant -> ACastDVariant ->
                                     Protocol ((ClockP2F (ACastP2F String)), CarryTokens Int) (ACastF2P String)
@@ -642,7 +642,7 @@ testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
       _ -> error $ "Help!" ++ show mb
 
   () <- readChan pump
-  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Bob" (ACast_VAL "1", DeliverTokensWithMessage 8))), SendTokens 41)
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Bob" (ACast_VAL "1", DeliverTokensWithMessage 8))), SendTokens 21)
 
   () <- readChan pump
   writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver "Carol" (ACast_VAL "2", DeliverTokensWithMessage 8))), SendTokens 0)
@@ -681,7 +681,7 @@ testACastBroken = runITMinIO 120 $ execUC
   testEnvACastBrokenAgreement
   (runAsyncP $ protACastBroken ACastTSmall ACastRCorrect ACastDSmall)
   (runAsyncF $ bangFAsync fMulticastToken)
-  (runTokenA dummyAdversaryToken)
+  dummyAdversaryToken
 
 testCompareBrokenAgreement :: IO Bool
 testCompareBrokenAgreement = runITMinIO 120 $ do
@@ -694,7 +694,7 @@ testCompareBrokenAgreement = runITMinIO 120 $ do
              testEnvACastBrokenAgreement
              (runAsyncP $ prot ())
              (runAsyncF $ bangFAsync fMulticastToken)
-             (runTokenA dummyAdversaryToken)
+             dummyAdversaryToken
   let (t1, bits) = t1R
   liftIO $ putStrLn ""
   liftIO $ putStrLn ""
@@ -718,7 +718,7 @@ testCompareBrokenReliability = runITMinIO 120 $ do
              testEnvACastBrokenReliability
              (runAsyncP $ prot ())
              (runAsyncF $ bangFAsync fMulticastToken)
-             (runTokenA dummyAdversaryToken)
+             dummyAdversaryToken
   let (t1, bits) = t1R
   liftIO $ putStrLn ""
   liftIO $ putStrLn ""
@@ -741,7 +741,7 @@ testCompareBrokenValidity = runITMinIO 120 $ do
              testEnvACastBrokenValidity
              (runAsyncP $ prot ())
              (runAsyncF $ bangFAsync fMulticastToken)
-             (runTokenA dummyAdversaryToken)
+             dummyAdversaryToken
   let (t1, bits) = t1R
   liftIO $ putStrLn ""
   liftIO $ putStrLn ""
@@ -840,7 +840,8 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
         isSet <- readIORef isFuncSetForCruptSender
         if isCruptSender && isSet == False then do
           liftIO $ putStrLn $ "setting up functionality in case of corrupt sender"
-          writeChan a2p (pidS, (ClockP2F_Through $ (ACastP2F_Input message, SendTokens (length parties))))
+          tks <- ?getToken
+          writeChan a2p (pidS, (ClockP2F_Through $ (ACastP2F_Input message, SendTokens (min tks (length parties)))))
           (_,_) <- readChan p2a
           writeIORef isFuncSetForCruptSender True
           return ()
@@ -922,7 +923,7 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
   -- sandbox simulation.
   mf <- selectRead z2a f2a   -- TODO: could there be a P2A here?
 
-  fork $ execUC_ sbxEnv (runAsyncP sbxProt) (runAsyncF (sbxBullRand ())) (runTokenA sbxAdv)
+  fork $ execUC_ sbxEnv (runAsyncP sbxProt) (runAsyncF (sbxBullRand ())) sbxAdv
   () <- readChan sbxpump
 
   -- After initializing, the sbxAdv is now listening on z2a,f2a,p2a. So this passes to those
@@ -970,7 +971,7 @@ testCompare = runITMinIO 120 $ do
              testEnvACast 
              (runAsyncP $ prot ())
              (runAsyncF $ bangFAsync fMulticastToken)
-             (runTokenA dummyAdversaryToken)
+             dummyAdversaryToken
   let (t1, bits) = t1R
   liftIO $ putStrLn ""
   liftIO $ putStrLn ""  
