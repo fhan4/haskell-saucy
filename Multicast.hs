@@ -40,7 +40,9 @@ fMulticast (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
         if pid == pidS then do
           ?leak m
           forMseq_ parties $ \pidR -> do
-             eventually $ writeChan f2p (pidR, MulticastF2P_Deliver m)
+             eventually $ do 
+               liftIO $ putStrLn $ "sending a deliver message to " ++ show pidR
+               writeChan f2p (pidR, MulticastF2P_Deliver m)
           writeChan f2p (pidS, MulticastF2P_OK)
         else error "multicast activated not by sender"
   else do
@@ -64,6 +66,14 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   let (pidS :: PID, parties :: [PID], sssid :: String) = readNote "fMulticast" $ snd sid
 
   tokens <- newIORef 0
+  
+  let require cond msg = 
+        if not cond then do
+          liftIO $ putStrLn $ msg
+          ?pass
+          readChan =<< newChan
+        else return ()
+
 
   if not $ member pidS ?crupt then
       -- Only activated by the designated sender
@@ -81,9 +91,17 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
           forMseq_ parties $ \pidR -> do
             tk <- readIORef tokens
             if tk >=1 then do
-              writeIORef tokens (max 0 (tk-1-st))
-              liftIO $ putStrLn $ "tokens left: " ++ (show (max 0 (tk-1-st)))
-              eventually $ writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage (min st (tk-1))))
+              --writeIORef tokens (max 0 (tk-1-st))
+              --liftIO $ putStrLn $ "tokens left: " ++ (show (max 0 (tk-1-st)))
+              eventually $ do
+                tk <- readIORef tokens
+                writeIORef tokens (tk - st - 1)
+                --writeIORef tokens (max 0 (tk-1-st))
+                tk <- readIORef tokens
+                require (tk>=0) "[fMulticast] Not enough tokens"
+                liftIO $ putStrLn $ "sending a multicast to " ++ show pidR ++ " with " ++ show tk ++ " tokens"
+                writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage st))
+                --writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage (min st (tk-1))))
             else return()
           writeChan f2p (pidS, (MulticastF2P_OK, DeliverTokensWithMessage 0))
         else error "multicast activated not by sender"
