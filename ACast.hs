@@ -90,14 +90,14 @@ fACastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   -- Every honest party eventually receives an output
   forMseq_ parties $ \pj -> do
     if not (Map.member pj ?crupt) then do
-      tk <- readIORef tokens
-      if tk >=1 then do
-        writeIORef tokens (tk-1)
-        liftIO $ putStrLn $ "[fACast]: tokens left: " ++ (show (tk-1))
-        eventually $ do
+      eventually $ do
+        tk <- readIORef tokens
+        if tk >=1 then do
+          writeIORef tokens (tk-1)  -- Burn 1 token for delivery
+          liftIO $ putStrLn $ "[fACast]: tokens left: " ++ (show (tk-1))
           liftIO $ putStrLn $ "[fACast]: queued party: " ++ (show pj)
           writeChan f2p (pj, ACastF2P_Deliver m)
-      else return()
+        else return()
     else do
       return()
 
@@ -319,8 +319,10 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
   (recvC, multicastC, cOK) <- manyMulticast ?pid parties (f2p, p2f)
   let multicast (x, DeliverTokensWithMessage st) = do
         tk <- readIORef tokens
-        let neededTokens = (length parties) * (st+1)
-        writeIORef tokens (max 0 (tk-neededTokens))
+        let neededTokens = (length parties) * (st+1)  -- The multicast requires sending st tokens to each party, plus 1 delivery fee for each message
+        writeIORef tokens (max 0 (tk-neededTokens))  -- Try to send the required tokens in a best effort approach
+
+        -- st specifies the tokens F will send to each party; SendTokens represents the tokens F will receive
         writeChan multicastC ((x, DeliverTokensWithMessage st), SendTokens (min tk neededTokens))
         readChan cOK
   let recv = readChan recvC -- :: m (ACastMsg t)
@@ -333,6 +335,7 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
           -- liftIO $ putStrLn $ "[" ++ ?pid ++ "] Sending READY"
           writeIORef sentReady True
           multicast $ (ACast_READY v, DeliverTokensWithMessage 0)
+          -- Each party should have already received Tokens scheduled by the sender's input, so no need to send more tokens from party to party
         else return ()
 
   -- Sender provides input
@@ -353,6 +356,7 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
          liftIO $ putStrLn $ "Step 1"
          require (?pid == pidS) "[protACast]: only sender provides input"
          multicast (ACast_VAL m, DeliverTokensWithMessage ((length parties)*2))
+         -- Give each party enough tokens for multicasting one round of ECHO and one round of READY
          -- liftIO $ putStrLn $ "[protACast]: multicast done"
          writeChan p2z ACastF2P_OK
 
@@ -383,6 +387,7 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
           readIORef inputReceived >>= \b -> require (not b) "[protACast]: Too many inputs received"
           writeIORef inputReceived True
           multicast $ (ACast_ECHO v, DeliverTokensWithMessage 0)
+          -- Each party should have already received Tokens scheduled by the sender's input, so no need to send more tokens from party to party
           ?pass
 
       ACast_ECHO v -> do

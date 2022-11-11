@@ -79,12 +79,13 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
         if pid == pidS then do
           ?leak ((m, DeliverTokensWithMessage st), SendTokens a)
           forMseq_ parties $ \pidR -> do
-            tk <- readIORef tokens
-            if tk >=1 then do
-              writeIORef tokens (max 0 (tk-1-st))
-              liftIO $ putStrLn $ "tokens left: " ++ (show (max 0 (tk-1-st)))
-              eventually $ writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage (min st (tk-1))))
-            else return()
+            eventually $ do
+              tk <- readIORef tokens
+              if tk >=1 then do
+                writeIORef tokens (max 0 (tk-1-st))  -- Burn the delivery fee and send as many requested tokens to the receiver as possible
+                liftIO $ putStrLn $ "tokens left: " ++ (show (max 0 (tk-1-st)))
+                writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage (min st (tk-1))))  -- Includes either st or all tokens left in case of insufficient reserves
+              else return()
           writeChan f2p (pidS, (MulticastF2P_OK, DeliverTokensWithMessage 0))
         else error "multicast activated not by sender"
   else do
@@ -96,7 +97,7 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
          if member pidR del then return ()
          else do
            writeIORef delivered (insert pidR () del)
-           writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage t))
+           writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage t))  -- Send tokens as specified by the Adversary (which should receive these tokens from the Environment)
   return ()
 
 {-- An !fAuth hybrid protocol realizing fMulticast --}
