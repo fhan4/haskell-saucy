@@ -69,7 +69,7 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   
   let require cond msg = 
         if not cond then do
-          liftIO $ putStrLn $ msg
+          liftIO $ putStrLn $ "\t\n\n[fMulticast Error]>>>>>>" ++ show msg ++ "\n"
           ?pass
           readChan =<< newChan
         else return ()
@@ -92,13 +92,10 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
             eventually $ do
               tk <- readIORef tokens
               if tk >=1 then do
-                --writeIORef tokens (max 0 (tk-1-st))  -- Burn the delivery fee and send as many requested tokens to the receiver as possible
-                writeIORef tokens (tk - st - 1)
-                tk <- readIORef tokens
-                require (tk>=0) "[fMulticast] Not enough tokens"
+                writeIORef tokens (max 0 (tk-1-st))  -- Burn the delivery fee and send as many requested tokens to the receiver as possible
                 liftIO $ putStrLn $ "tokens left: " ++ (show (max 0 (tk-1-st)))
                 writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage (min st (tk-1))))  -- Includes either st or all tokens left in case of insufficient reserves
-              else return()
+              else ?pass --return()
           writeChan f2p (pidS, (MulticastF2P_OK, DeliverTokensWithMessage 0))
         else error "multicast activated not by sender"
   else do
