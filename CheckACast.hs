@@ -11,6 +11,7 @@ import Multisession
 import Multicast
 import TokenWrapper
 import ACast
+import TestTools
 
 import Safe
 import Control.Concurrent.MonadIO
@@ -22,10 +23,12 @@ import Data.Set (Set)
 import Data.List (elemIndex, delete)
 import Test.QuickCheck
 import Test.QuickCheck.Monadic
-import TestTools
+--import TestTools (selectPIDs, AsyncCmd (..), rqDeliverList, rqDeliverOrProgress)
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
 
+{- a simple property environment that just chooses some random number of parties, 
+   a random leader, they're all honest, and it runs the experiment -}
 propIdealACastSafetyEnv
   :: MonadEnvironment m =>
   Environment (ACastF2P String) (ClockP2F (ACastP2F String)) (SttCruptA2Z a (Either (ClockF2A String) Void)) (SttCruptZ2A b (Either ClockA2F Void)) Void (ClockZ2F) String m
@@ -73,29 +76,22 @@ propIdealACastSafetyEnv z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
 
   writeChan outp "environment output: 1"
 
+-- runs the above property environment
 prop_dumySafety = monadicIO $ do
     t <- run $ runITMinIO 120 $ execUC propIdealACastSafetyEnv (idealProtocol) (runAsyncF $ fACast) dummyAdversary
     let x :: String = show t
     assert (1 == 1) 
 
-runqueueExecList :: Int -> Gen [Int]
-runqueueExecList n = frequency
-    [ (1,return []),
-      (5, if n==0 then return [] else (:) <$> choose (0,n-1)  <*> (runqueueExecList (n-1)))
-    ] 
 
-data ACastCmd = CmdVAL SID PID String | CmdECHO SID PID String | CmdREADY SID PID String | CmdDeliver Int | CmdGetCount deriving Show
+data ACastCmd = CmdVAL SID PID String | CmdECHO SID PID String | CmdREADY SID PID String deriving Show
 
 -- SID, Parties, Crupt, t < n/3, leader
-type ACastConfig = (SID, [PID], Map PID (), Int, PID)
+type ACastLeader = PID
+type ACastConfig = (SID, [PID], CruptList , Int, ACastLeader)
 
 performACastEnv 
   :: (MonadEnvironment m) => 
-  ACastConfig -> [ACastCmd] ->
---  (Environment (ACastF2P String) (ClockP2F (ACastP2F String))
---     (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID, ACastMsg String)) (SID, MulticastF2A (ACastMsg String))))
---     (SttCruptZ2A (ClockP2F (SID, ACastMsg String)) (Either ClockA2F (SID, MulticastA2F (ACastMsg String)))) Void
---     (ClockZ2F) Transcript m)
+  ACastConfig -> [Either ACastCmd AsyncCmd] ->
   (Environment (ACastF2P String) ((ClockP2F (ACastP2F String)), CarryTokens Int)
      (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int)) 
                   (Either (ClockF2A (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)))
@@ -132,35 +128,38 @@ performACastEnv aCastConfig cmdList z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump
         SttCruptA2Z_F2A (Left (ClockF2A_Leaks l)) -> do
           --printEnvIdeal $ "[testEnvACastBroken leaks]: " ++ show l
           ?pass
+        SttCruptA2Z_F2A (Left (ClockF2A_Advance)) -> do
+          printEnvReal $ "Forced Clock advance"
+          ?pass
         _ -> error $ "Help!" ++ show mb
         
     () <- readChan pump 
   
-    --forMseq_ [1..24] $ \x -> do
-    --  () <- readChan pump
-    --  writeChan z2a SttCruptZ2A_TokenSend
     writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 1000)
     readChan clockChan
     let n = length parties
 
     forMseq_ cmdList $ \cmd -> do
         case cmd of
-            CmdVAL ssid' pid' m' -> do
+            Left (CmdVAL ssid' pid' m') -> do
                 writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssid', (MulticastA2F_Deliver pid' (ACast_VAL m'), DeliverTokensWithMessage (n*5)))), SendTokens 0)
                 readChan pump
-            CmdECHO ssid' pid' m' -> do
+            Left (CmdECHO ssid' pid' m') -> do
                 writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssid', (MulticastA2F_Deliver pid' (ACast_ECHO m'), DeliverTokensWithMessage 0))), SendTokens 0)
                 readChan pump
-            CmdREADY ssid' pid' m' -> do
+            Left (CmdREADY ssid' pid' m') -> do
                 writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssid', (MulticastA2F_Deliver pid' (ACast_READY m'), DeliverTokensWithMessage 0))), SendTokens 0)
                 readChan pump
-            CmdDeliver idx' -> do
+            Right (CmdDeliver idx') -> do
                 writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens 0)
                 readChan pump
-            CmdGetCount -> do     
+            Right (CmdGetCount) -> do     
                 writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 0)
                 readChan clockChan
                 return ()
+            Right (CmdMakeProgress) -> do
+                writeChan z2f ClockZ2F_MakeProgress
+                readChan pump
     writeChan outp =<< readIORef transcript
 
 propEnvBrachaSafety
@@ -171,7 +170,7 @@ propEnvBrachaSafety
                           (SID, (MulticastF2A (ACastMsg String), TransferTokens Int))))
      ((SttCruptZ2A (ClockP2F (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int))) 
                   (Either ClockA2F (SID, (MulticastA2F (ACastMsg String), TransferTokens Int)))), CarryTokens Int) Void
-     (ClockZ2F) (ACastConfig, [ACastCmd], Transcript) m
+     (ClockZ2F) (ACastConfig, [Either ACastCmd AsyncCmd], Transcript) m
 propEnvBrachaSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   let extendRight conf = show ("", conf)
   
@@ -217,6 +216,9 @@ propEnvBrachaSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
       SttCruptA2Z_F2A (Left (ClockF2A_Leaks l)) -> do
         --printEnvIdeal $ "[testEnvACastBroken leaks]: " ++ show l
         ?pass
+      SttCruptA2Z_F2A (Left (ClockF2A_Advance)) -> do
+        printEnvReal $ "Forced Clock advance"
+        ?pass
       _ -> error $ "Help!" ++ show mb
 
   --forMseq_ [1..24] $ \x -> do
@@ -238,25 +240,15 @@ propEnvBrachaSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   forMseq_ [0..(length to_send_val)-1] $ \i -> do
     this_val <- liftIO $ (generate $ choose (0 :: Int, 1 :: Int)) >>= return . show 
     writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, (MulticastA2F_Deliver (to_send_val !! i) (ACast_VAL this_val), DeliverTokensWithMessage (n*5)))), SendTokens 0)
-    modifyIORef cmdList $ (++) [CmdVAL ssidAlice1 (to_send_val !! i) this_val]
+    modifyIORef cmdList $ (++) [Left $ CmdVAL ssidAlice1 (to_send_val !! i) this_val]
     () <- readChan pump
     return ()
 
-  -- get the number of things in the runqueue
-  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 10)
-  num <- readChan clockChan
-  idxToDeliver <- liftIO $ generate $ runqueueExecList num  
-  modifyIORef cmdList $ (++) [CmdGetCount]
-
-
-  -- deliver the indices
-  forMseq_ [0..(length idxToDeliver)-1] $ \i -> do
-    writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver (idxToDeliver !! i))), SendTokens 0)
-    () <- readChan pump
-    modifyIORef cmdList $ (++) [CmdDeliver (idxToDeliver !! i)]
-    modifyIORef numDelivers $ (+) 1 
-    readIORef numDelivers >>= (\n -> printYellow ("numDelivers: " ++ show n))
-    return ()
+  -- deliver / make progress  
+  getCmdChan <- newChan  
+  () <- deliverOrProgressSubset clockChan 10 getCmdChan z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp
+  theList <- readChan getCmdChan
+  modifyIORef cmdList $ (++) theList
 
   -- do the same with ECHO
   to_send_echo <- selectPIDs parties 
@@ -266,24 +258,15 @@ propEnvBrachaSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   forMseq_ [0..(length to_send_echo)-1] $ \i -> do
     this_val <- liftIO $ (generate $ choose (0 :: Int, 1 :: Int)) >>= return . show 
     writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice2, (MulticastA2F_Deliver (to_send_echo !! i) (ACast_ECHO this_val), DeliverTokensWithMessage 0))), SendTokens 0)
-    modifyIORef cmdList $ (++) [CmdECHO ssidAlice2 (to_send_echo !! i) this_val]
+    modifyIORef cmdList $ (++) [Left $ CmdECHO ssidAlice2 (to_send_echo !! i) this_val]
     () <- readChan pump
     return ()
 
-  -- get the number of things in the runqueue
-  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 10)
-  num <- readChan clockChan
-  idxToDeliver <- liftIO $ generate $ runqueueExecList num
-  modifyIORef cmdList $ (++) [CmdGetCount]
-
-  -- deliver the indices
-  forMseq_ [0..(length idxToDeliver)-1] $ \i -> do
-    writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver (idxToDeliver !! i))), SendTokens 0)
-    () <- readChan pump
-    modifyIORef cmdList $ (++) [CmdDeliver (idxToDeliver !! i)]
-    modifyIORef numDelivers $ (+) 1 
-    readIORef numDelivers >>= (\n -> printYellow ("numDelivers: " ++ show n))
-    return ()
+  -- deliver / make progress
+  getCmdChan <- newChan  
+  () <- deliverOrProgressSubset clockChan 10 getCmdChan z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp
+  theList <- readChan getCmdChan
+  modifyIORef cmdList $ (++) theList
   
   -- do the same with READY
   to_send_ready <- selectPIDs parties 
@@ -293,34 +276,25 @@ propEnvBrachaSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   forMseq_ [0..(length to_send_ready)-1] $ \i -> do
     this_val <- liftIO $ (generate $ choose (0 :: Int, 1 :: Int)) >>= return . show 
     writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice3, (MulticastA2F_Deliver (to_send_ready !! i) (ACast_READY this_val), DeliverTokensWithMessage 0))), SendTokens 0)
-    modifyIORef cmdList $ (++) [CmdREADY ssidAlice3 (to_send_ready !! i) this_val]
+    modifyIORef cmdList $ (++) [Left $ CmdREADY ssidAlice3 (to_send_ready !! i) this_val]
     () <- readChan pump
     return ()
-
-  -- get the number of things in the runqueue
-  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 10)
-  num <- readChan clockChan
-  idxToDeliver <- liftIO $ generate $ runqueueExecList num  
-  modifyIORef cmdList $ (++) [CmdGetCount]
-
-  -- deliver the indices
-  forMseq_ [0..(length idxToDeliver)-1] $ \i -> do
-    writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver (idxToDeliver !! i))), SendTokens 0)
-    () <- readChan pump
-    modifyIORef cmdList $ (++) [CmdDeliver (idxToDeliver !! i)]
-    modifyIORef numDelivers $ (+) 1 
-    readIORef numDelivers >>= (\n -> printYellow ("numDelivers: " ++ show n))
-    return ()
+  
+  -- deliver / make progress
+  getCmdChan <- newChan  
+  () <- deliverOrProgressSubset clockChan 10 getCmdChan z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp
+  theList <- readChan getCmdChan
+  modifyIORef cmdList $ (++) theList
 
   -- deliver any remaining messages
   --writeChan z2a $ SttCruptZ2A_A2F $ Left ClockA2F_GetCount
   --num <- readChan clockChan
-  --modifyIORef cmdList $ (++) [CmdGetCount]
+  --modifyIORef cmdList $ (++) [Right $ CmdGetCount]
 
   --forMseq_ (reverse [0..num-1]) $ \i -> do
   --  idx <- liftIO $ generate $ choose (0,i)
   --  writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx)  
-  --  modifyIORef cmdList $ (++) [CmdDeliver idx]
+  --  modifyIORef cmdList $ (++) [Right $ CmdDeliver idx]
   --  modifyIORef numDelivers $ (+) 1 
   --  readIORef numDelivers >>= (\n -> printYellow ("numDelivers: " ++ show n))
   --  () <- readChan pump
@@ -333,7 +307,7 @@ propEnvBrachaSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
 
 prop_brachaSafety = monadicIO $ do
     let variantT = ACastTSmall
-    let variantR = ACastRCorrect 
+    let variantR = ACastRCorrect
     let variantD = ACastDSmall
     let prot () = protACastBroken variantT variantR variantD 
     --(config', c', t') <- run $ runITMinIO 120 $ execUC propEnvBrachaSafety (runAsyncP protACast) (runAsyncF $ bangFAsync fMulticast) dummyAdversary
@@ -362,59 +336,24 @@ prop_brachaSafety = monadicIO $ do
     printYellow ("[Config]\n\n" ++ show config')
     printYellow ("[Inputs]\n\n" ++ show c')
     assert ( (Set.size o) <= 1 )
-                
+       
 
---prop_brachaSafety = monadicIO $ do
---  (t1 :: Transcript, t2 :: Transcript) <- run $ runITMinIO 120 $ do
---    liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
---    t1R <- runRandRecord $ execUC
---               propEnvBrachaSafety
---               (runAsyncP protACastBroken) 
---               (runAsyncF $ bangFAsync fMulticast)
---               dummyAdversary
---    let (t1, bits) = t1R
---    liftIO $ putStrLn ""
---    liftIO $ putStrLn ""  
---    liftIO $ putStrLn "*** RUNNING IDEAL WORLD ***"
---    t2 <- runRandReplay bits $ execUC
---               propEnvBrachaSafety
---               (idealProtocol) 
---               (runAsyncF $ fACast)
---               simACast
---    --assert (t1 == t2)
---    return (t1, t2)
---  assert (t1==t2)
-
---testCompareBroken :: IO Bool
---testCompareBroken = runITMinIO 120 $ do
---  liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
---  t1R <- runRandRecord $ execUC
---             testEnvACastBroken 
---             (runAsyncP protACastBroken) 
---             (runAsyncF $ bangFAsync fMulticast)
---             dummyAdversary
---  let (t1, bits) = t1R
---  liftIO $ putStrLn ""
---  liftIO $ putStrLn ""  
---  liftIO $ putStrLn "*** RUNNING IDEAL WORLD ***"
---  t2 <- runRandReplay bits $ execUC
---             testEnvACastBroken 
---             (idealProtocol) 
---             (runAsyncF $ fACast)
---             simACast
---  return (t1 == t2)
-
-
---propEnvWithToken
+-- same as safety environment except all messages are delievered
+-- in the right logical round         
+--propEnvBrachaLiveness
 --  :: (MonadEnvironment m) =>
---  Environment (ACastF2P String) (ClockP2F (ACastP2F String))
---     (SttCruptA2Z (SID, MulticastF2P (ACastMsg String)) (Either (ClockF2A (SID, ACastMsg String)) (SID, MulticastF2A (ACastMsg String))))
---     (SttCruptZ2A (ClockP2F (SID, ACastMsg String)) (Either ClockA2F (SID, MulticastA2F (ACastMsg String)))) Void
---     (ClockZ2F) (ACastConfig, [ACastCmd], Transcript) m
---propEnvWithToken z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
+--  Environment (ACastF2P String) ((ClockP2F (ACastP2F String)), CarryTokens Int)
+--     (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int)) 
+--                  (Either (ClockF2A (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)))
+--                          (SID, (MulticastF2A (ACastMsg String), TransferTokens Int))))
+--     ((SttCruptZ2A (ClockP2F (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int))) 
+--                  (Either ClockA2F (SID, (MulticastA2F (ACastMsg String), TransferTokens Int)))), CarryTokens Int) Void
+--     (ClockZ2F) (ACastConfig, [Either ACastCmd AsyncCmd], Transcript) m
+--propEnvBrachaLiveness z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
 --  let extendRight conf = show ("", conf)
 --  
 --  let parties = ["Alice", "Bob", "Carol", "Dave"]
+--  let honest = ["Bob", "Carol", "Dave"]
 --  let leader = "Alice"
 --  let t = 1 :: Int
 --  let crupt = Map.fromList [("Alice",())] :: Map PID () 
@@ -429,6 +368,8 @@ prop_brachaSafety = monadicIO $ do
 --
 --  transcript <- newIORef []
 --  cmdList <- newIORef []
+--
+--  numDelivers <- newIORef 0
 --  
 --  fork $ forever $ do
 --    (pid, m) <- readChan p2z
@@ -454,38 +395,65 @@ prop_brachaSafety = monadicIO $ do
 --      SttCruptA2Z_F2A (Left (ClockF2A_Leaks l)) -> do
 --        --printEnvIdeal $ "[testEnvACastBroken leaks]: " ++ show l
 --        ?pass
+--      SttCruptA2Z_F2A (Left (ClockF2A_Advance)) -> do
+--        printEnvReal $ "Forced Clock advance"
+--        ?pass
 --      _ -> error $ "Help!" ++ show mb
 --
---  -- first thing is to send tokens to the adversary
---  forMseq_ [1..24] $ \x -> do
---    () <- readChan pump
---    writeChan z2a SttCruptZ2A_TokenSend
---
+--  --forMseq_ [1..24] $ \x -> do
+--  --  () <- readChan pump
+--  --  writeChan z2a SttCruptZ2A_TokenSend
 --  () <- readChan pump
+--  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 1000)
+--
+--  --() <- readChan pump
+--  c <- readChan clockChan
 --  -- Select a set of parties and select one of 0 and 1 for each VAL message
---  to_send_val <- selectPIDs parties
---  printYellow ("\nParties: " ++ show to_send_val ++ "\n")
+--  --to_send_val <- selectPIDs parties
+--  --printYellow ("\nParties: " ++ show to_send_val ++ "\n")
+--
+--  --let n = length parties
+--  --let n' = length to_send_val
+--  sp_val <- shuffleParties honest
+--  forMseq_ sp_val $ \p -> do
+--    this_val <- liftIO $ (generate 
 --
 --  -- send VAL to each of the with one of [0,1] as the value
 --  forMseq_ [0..(length to_send_val)-1] $ \i -> do
 --    this_val <- liftIO $ (generate $ choose (0 :: Int, 1 :: Int)) >>= return . show 
---    writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice1, MulticastA2F_Deliver (to_send_val !! i) (ACast_VAL this_val))
---    modifyIORef cmdList $ (++) [CmdVAL ssidAlice1 (to_send_val !! i) this_val]
+--    writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, (MulticastA2F_Deliver (to_send_val !! i) (ACast_VAL this_val), DeliverTokensWithMessage (n*5)))), SendTokens 0)
+--    modifyIORef cmdList $ (++) [Left $ CmdVAL ssidAlice1 (to_send_val !! i) this_val]
 --    () <- readChan pump
 --    return ()
 --
 --  -- get the number of things in the runqueue
---  writeChan z2a $ SttCruptZ2A_A2F $ Left ClockA2F_GetCount
+--  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 10)
 --  num <- readChan clockChan
---  idxToDeliver <- liftIO $ generate $ runqueueExecList num  
---  modifyIORef cmdList $ (++) [CmdGetCount]
+--  delivers <- liftIO $ generate $ rqDeliverOrProgress num
+--  --idxToDeliver <- liftIO $ generate $ rqIndexList num  
+--  modifyIORef cmdList $ (++) [Right CmdGetCount]
 --
 --
 --  -- deliver the indices
---  forMseq_ [0..(length idxToDeliver)-1] $ \i -> do
---    writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver (idxToDeliver !! i))
---    modifyIORef cmdList $ (++) [CmdDeliver (idxToDeliver !! i)]
+--  --forMseq_ [0..(length idxToDeliver)-1] $ \i -> do
+--  forMseq_ delivers $ \d -> do
+--    case d of 
+--      CmdDeliver idx' -> do
+--        writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 10)
+--        c <- readChan clockChan
+--        if idx' < c then do 
+--          modifyIORef cmdList $ (++) [Right d]
+--          writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens 0)
+--        else return ()
+--      CmdMakeProgress -> do 
+--        modifyIORef cmdList $ (++) [Right d]
+--        writeChan z2f ClockZ2F_MakeProgress
+--      _ -> error "Z: unexpected command"
+--    --writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver (idxToDeliver !! i))), SendTokens 0)
 --    () <- readChan pump
+--    --modifyIORef cmdList $ (++) [Left $ CmdDeliver (idxToDeliver !! i)]
+--    modifyIORef numDelivers $ (+) 1 
+--    readIORef numDelivers >>= (\n -> printYellow ("numDelivers: " ++ show n))
 --    return ()
 --
 --  -- do the same with ECHO
@@ -495,22 +463,38 @@ prop_brachaSafety = monadicIO $ do
 --  -- send VAL to each of the with one of [0,1] as the value
 --  forMseq_ [0..(length to_send_echo)-1] $ \i -> do
 --    this_val <- liftIO $ (generate $ choose (0 :: Int, 1 :: Int)) >>= return . show 
---    writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice2, MulticastA2F_Deliver (to_send_echo !! i) (ACast_ECHO this_val))
---    modifyIORef cmdList $ (++) [CmdECHO ssidAlice2 (to_send_echo !! i) this_val]
+--    writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice2, (MulticastA2F_Deliver (to_send_echo !! i) (ACast_ECHO this_val), DeliverTokensWithMessage 0))), SendTokens 0)
+--    modifyIORef cmdList $ (++) [Left $ CmdECHO ssidAlice2 (to_send_echo !! i) this_val]
 --    () <- readChan pump
 --    return ()
 --
 --  -- get the number of things in the runqueue
---  writeChan z2a $ SttCruptZ2A_A2F $ Left ClockA2F_GetCount
+--  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 10)
 --  num <- readChan clockChan
---  idxToDeliver <- liftIO $ generate $ runqueueExecList num
---  modifyIORef cmdList $ (++) [CmdGetCount]
+--  delivers <- liftIO $ generate $ rqDeliverOrProgress num
+--  --idxToDeliver <- liftIO $ generate $ rqIndexList num
+--  modifyIORef cmdList $ (++) [Right $ CmdGetCount]
 --
 --  -- deliver the indices
---  forMseq_ [0..(length idxToDeliver)-1] $ \i -> do
---    writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver (idxToDeliver !! i))
---    modifyIORef cmdList $ (++) [CmdDeliver (idxToDeliver !! i)]
+--  --forMseq_ [0..(length idxToDeliver)-1] $ \i -> do
+--  forMseq_ delivers $ \d -> do
+--    case d of 
+--      CmdDeliver idx' -> do
+--        writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 10)
+--        c <- readChan clockChan
+--        if idx' < c then do
+--          modifyIORef cmdList $ (++) [Right $ d]
+--          writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens 0)
+--        else return ()
+--      CmdMakeProgress -> do
+--        writeChan z2f ClockZ2F_MakeProgress
+--        modifyIORef cmdList $ (++) [Right $ d]
+--      _ -> error "Z: unexpected command"
+--    --writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver (idxToDeliver !! i))), SendTokens 0)
 --    () <- readChan pump
+--    --modifyIORef cmdList $ (++) [Right $ CmdDeliver (idxToDeliver !! i)]
+--    modifyIORef numDelivers $ (+) 1 
+--    readIORef numDelivers >>= (\n -> printYellow ("numDelivers: " ++ show n))
 --    return ()
 --  
 --  -- do the same with READY
@@ -520,40 +504,38 @@ prop_brachaSafety = monadicIO $ do
 --  -- send VAL to each of the with one of [0,1] as the value
 --  forMseq_ [0..(length to_send_ready)-1] $ \i -> do
 --    this_val <- liftIO $ (generate $ choose (0 :: Int, 1 :: Int)) >>= return . show 
---    writeChan z2a $ SttCruptZ2A_A2F $ Right (ssidAlice3, MulticastA2F_Deliver (to_send_ready !! i) (ACast_READY this_val))
---    modifyIORef cmdList $ (++) [CmdREADY ssidAlice3 (to_send_ready !! i) this_val]
+--    writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice3, (MulticastA2F_Deliver (to_send_ready !! i) (ACast_READY this_val), DeliverTokensWithMessage 0))), SendTokens 0)
+--    modifyIORef cmdList $ (++) [Left $ CmdREADY ssidAlice3 (to_send_ready !! i) this_val]
 --    () <- readChan pump
 --    return ()
 --
 --  -- get the number of things in the runqueue
---  writeChan z2a $ SttCruptZ2A_A2F $ Left ClockA2F_GetCount
+--  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 10)
 --  num <- readChan clockChan
---  idxToDeliver <- liftIO $ generate $ runqueueExecList num  
---  modifyIORef cmdList $ (++) [CmdGetCount]
+--  delivers <- liftIO $ generate $ rqDeliverOrProgress num
+--  --idxToDeliver <- liftIO $ generate $ rqIndexList num  
+--  modifyIORef cmdList $ (++) [Right CmdGetCount]
 --
 --  -- deliver the indices
---  forMseq_ [0..(length idxToDeliver)-1] $ \i -> do
---    writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver (idxToDeliver !! i))
---    modifyIORef cmdList $ (++) [CmdDeliver (idxToDeliver !! i)]
+--  --forMseq_ [0..(length idxToDeliver)-1] $ \i -> do
+--  forMseq_ delivers $ \d -> do
+--    case d of 
+--      CmdDeliver idx' -> do
+--        writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 10)
+--        c <- readChan clockChan
+--        if idx' < c then do
+--          modifyIORef cmdList $ (++) [Right d]
+--          writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens 0)
+--        else return ()
+--      CmdMakeProgress -> do
+--          modifyIORef cmdList $ (++) [Right d]
+--          writeChan z2f ClockZ2F_MakeProgress
+--      _ -> error "Z: unexpected command"
+--    --writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver (idxToDeliver !! i))), SendTokens 0)
 --    () <- readChan pump
---    return ()
---
---  -- deliver any remaining messages
---  writeChan z2a $ SttCruptZ2A_A2F $ Left ClockA2F_GetCount
---  num <- readChan clockChan
---  modifyIORef cmdList $ (++) [CmdGetCount]
---
---  forMseq_ (reverse [0..num-1]) $ \i -> do
---    idx <- liftIO $ generate $ choose (0,i)
---    writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx)  
---    modifyIORef cmdList $ (++) [CmdDeliver idx]
---    () <- readChan pump
---    return ()
---  
---  -- force make progress until the runqueue is empty 
---  forMseq_ [1..48] $ \i -> do 
---    writeChan z2f ClockZ2F_MakeProgress 
---    () <- readChan pump
+--    --modifyIORef cmdList $ (++) [Right $ CmdDeliver (idxToDeliver !! i)]
+--    modifyIORef numDelivers $ (+) 1 
+--    readIORef numDelivers >>= (\n -> printYellow ("numDelivers: " ++ show n))
 --    return ()
 --
 --  tr <- readIORef transcript
@@ -561,21 +543,3 @@ prop_brachaSafety = monadicIO $ do
 --  --writeChan outp =<< readIORef transcript
 --  writeChan outp ((sid, parties, crupt, t, leader), reverse cl, tr)
 --
-----prop_brachaReliability = monadicIO $ do
-----    (config', c', t') <- run $ runITMinIO 120 $ execUC propEnvWithToken (runAsyncP protACast) (runAsyncF $ bangFAsync fMulticast) dummyAdversary
-----    t <- run $ runITMinIO 120 $ execUC (performACastEnv config' c') (runAsyncP protACast) (runAsyncF $ bangFAsync fMulticast) dummyAdversary
-----    let x :: String = show t
-----    -- require that all deliverances are the same
-----    numOut <- newIORef 0
-----    forMseq_ [0..(length t)-1] $ \i -> do
-----        case (t !! i) of 
-----            Right (pid, ACastF2P_Deliver m) -> 
-----                modifyIORef numOut $ (+) 1 
-----            Left m -> return ()
-----    o <- readIORef numOut
-----
-----    printYellow ("[Config]\n\n" ++ show config')
-----    printYellow ("[Inputs]\n\n" ++ show c')
-----    --assert ( (Set.size o) <= 1 )
-----  assert (o == 3)
---                
