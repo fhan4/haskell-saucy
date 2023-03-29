@@ -112,7 +112,7 @@ bangF f (p2f, f2p) (a2f, f2a) _ = do
     getSsid a2ssid ssid >>= flip writeChan m
 
   return ()
-
+ 
 
 -- The !P operator for protocols is nearly the same. The differences
 -- mainly have to do with (PID,_) not requiring a special case.

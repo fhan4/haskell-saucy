@@ -58,7 +58,8 @@ fMulticast (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   return ()
 
 fMulticastToken :: MonadFunctionalityAsync m ((t, TransferTokens Int), CarryTokens Int) =>
-  Functionality ((t, TransferTokens Int), CarryTokens Int) (MulticastF2P t, TransferTokens Int)
+  --Functionality ((t, TransferTokens Int), CarryTokens Int) (MulticastF2P t, TransferTokens Int)
+    Functionality ((t, TransferTokens Int), CarryTokens Int) (MulticastF2P t, CarryTokens Int)
                 (MulticastA2F t, TransferTokens Int) (MulticastF2A t, TransferTokens Int) Void Void m
 fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   -- Sender and set of parties is encoded in SID
@@ -84,8 +85,6 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
           writeIORef tokens (tk+a)
         else
           error "sending negative tokens"
-        liftIO $ putStrLn $ "received " ++ (show a) ++ " tokens from " ++ (show pid)
-        liftIO $ putStrLn $ "\n\nreceived a message to be multicast\n\n"
         if pid == pidS then do
           ?leak ((m, DeliverTokensWithMessage st), SendTokens a)
           forMseq_ parties $ \pidR -> do
@@ -93,10 +92,11 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
               tk <- readIORef tokens
               if tk >=1 then do
                 writeIORef tokens (max 0 (tk-1-st))  -- Burn the delivery fee and send as many requested tokens to the receiver as possible
-                liftIO $ putStrLn $ "tokens left: " ++ (show (max 0 (tk-1-st)))
-                writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage (min st (tk-1))))  -- Includes either st or all tokens left in case of insufficient reserves
+                --writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage (min st (tk-1))))  -- Includes either st or all tokens left in case of insufficient reserves
+                writeChan f2p (pidR, (MulticastF2P_Deliver m, SendTokens (min st (tk-1))))  -- Includes either st or all tokens left in case of insufficient reserves
               else ?pass --return()
-          writeChan f2p (pidS, (MulticastF2P_OK, DeliverTokensWithMessage 0))
+          --writeChan f2p (pidS, (MulticastF2P_OK, DeliverTokensWithMessage 0))
+          writeChan f2p (pidS, (MulticastF2P_OK, SendTokens 0))
         else error "multicast activated not by sender"
   else do
       -- If sender is corrupted, arbitrary messages can be delivered (once) to parties in any order
@@ -107,7 +107,8 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
          if member pidR del then return ()
          else do
            writeIORef delivered (insert pidR () del)
-           writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage t))  -- Send tokens as specified by the Adversary (which should receive these tokens from the Environment)
+           --writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage t))  -- Send tokens as specified by the Adversary (which should receive these tokens from the Environment)
+           writeChan f2p (pidR, (MulticastF2P_Deliver m, SendTokens t))  -- Send tokens as specified by the Adversary (which should receive these tokens from the Environment)
   return ()
 
 {-- An !fAuth hybrid protocol realizing fMulticast --}

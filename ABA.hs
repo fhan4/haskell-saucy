@@ -22,6 +22,7 @@ import ProcessIO
 import StaticCorruptions
 import Async
 import Multisession
+import TokenWrapper
 
 import Safe
 import Data.List (findIndex)
@@ -37,10 +38,76 @@ import qualified Data.Map.Strict as Map
 
 forMseq_ xs f = sequence_ $ map f xs
 
+--data TokenMsg a = (a, CarryTokens Int) deriving (Show, Eq)
+--type TokenMsg a = (a, CarryTokens b) deriving (Show, Eq)
 data CastP2F a = CastP2F_cast a | CastP2F_ro Int deriving Show
+----type CastP2F a = TokenMsg (a, TransferTokens Int)
+----type RoP2F = TokenMsg Bool
+--data CastF2P a = CastF2P_OK | CastF2P_Deliver a deriving (Show, Eq)
+--data RoP2F = RoP2F_ro Int deriving (Show, Eq)
 data CastF2P a = CastF2P_OK | CastF2P_Deliver a | CastF2P_ro Bool deriving (Show, Eq)
+--type CastF2P a = TokenMsg a
+--type RoF2P = TokenMsg Bool
+--data CoinP2F a = Either (CastP2F a) RoP2F deriving (Show, Eq)
+--data CoinF2P a = Either (CastF2P a) RoF2P deriving (Show, Eq)
+
+--type CastF2A a = (a, TransferTokens Int)
+--data CoinF2A = Either (CastF2A a) RoF2A deriving (Show, Eq)
+--data CoinA2F a = CastA2F_Deliver PID a deriving (Show, Eq) 
 data CastF2A a = CastF2A a | CastF2A_ro Bool deriving (Show, Eq)
 data CastA2F a = CastA2F_Deliver PID a deriving Show
+
+--type CastP2F_cast a = (a, TransferTokens Int)
+data CastCoinP2F a = CoinCastP2F_cast (a, TransferTokens Int) | CoinCastP2F_ro Int deriving (Show, Eq)
+data CastCoinF2P a = CoinCastF2P_OK | CoinCastF2P_Deliver a | CoinCastF2P_ro Bool deriving (Show, Eq)
+data CastCoinA2F a = CoinCastA2F_Deliver PID (a, TransferTokens Int) | CoinCastA2F_ro Int deriving (Show, Eq)
+data CastCoinF2A = CoinCastF2A_ro Bool deriving (Show, Eq)
+
+-- TODO: currently adv sends for free, we should change that
+fMulticastAndCoinToken :: MonadFunctionalityAsync m (t, TransferTokens Int) =>
+    Functionality (CastCoinP2F t, CarryTokens Int) (CastCoinF2P t, CarryTokens Int)
+                  (CastCoinA2F t) CastCoinF2A Void Void m 
+fMulticastAndCoinToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
+    let sid = ?sid :: SID
+    let (pidS :: PID, parties :: [PID], sssid :: String) = readNote "fMulticastAndCoinToken" $ snd sid
+    
+    let print x = do
+            liftIO $ putStrLn $ x
+    -- strong coin requires the same coin for each party in a round
+    coinFlips <- newIORef (empty :: Map Int Bool)
+
+    let require cond msg = 
+              if not cond then do
+                  liftIO $ putStrLn $ "\n\n\t[fMulticastToken Error]>>>>>>>" ++ show msg ++ "\n"
+                  ?pass
+                  readChan =<< newChan
+              else return ()
+    
+    if not $ member pidS ?crupt then
+        fork $ forever $ do
+            (pid, x) <- readChan p2f
+            case x of
+                (CoinCastP2F_cast (m, DeliverTokensWithMessage st), SendTokens a) -> do
+                    if pid == pidS then do
+                        ?leak (m, DeliverTokensWithMessage st)
+                        writeChan f2p (pidS, (CoinCastF2P_OK, SendTokens 0))
+                    else ?pass 
+                (CoinCastP2F_ro b, SendTokens a) -> do
+                    writeChan f2p (pidS, (CoinCastF2P_OK, SendTokens 0))
+    else do
+        delivered <- newIORef (empty :: Map PID ())
+        fork $ forever $ do
+            x <- readChan a2f 
+            case x of
+                CoinCastA2F_Deliver pidR (m, DeliverTokensWithMessage st) -> do
+                    del <- readIORef delivered
+                    if member pidR del then return ()
+                    else do
+                        modifyIORef delivered $ Map.insert pidR ()
+                        writeChan f2p (pidR, (CoinCastF2P_Deliver m, SendTokens st))
+                CoinCastA2F_ro x -> do
+                        writeChan f2a (CoinCastF2A_ro True)
+    return ()
 
 fMulticastAndCoin :: MonadFunctionalityAsync m t =>
     Functionality (CastP2F t) (CastF2P t) (CastA2F t) (CastF2A t) Void Void m
@@ -86,7 +153,6 @@ fMulticastAndCoin (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
                 modifyIORef delivered $ Map.insert pidR ()
                 writeChan f2p (pidR, CastF2P_Deliver m)
     return ()
-
 
 testEnvMulticastCoin z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
     let sid = ("sidTestEnvMulticastCoin", show (("Alice", "Bob", "Charlie", "Mary"), ""))

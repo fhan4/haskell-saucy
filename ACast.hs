@@ -111,8 +111,10 @@ data ACastMsg t = ACast_VAL t | ACast_ECHO t | ACast_READY t deriving (Show, Eq,
 -- Give (fBang fMulticast) a nicer interface
 manyMulticast :: MonadProtocol m =>
      PID -> [PID]
-     -> (Chan (SID, (MulticastF2P t, TransferTokens Int)), Chan (SID, ((t, TransferTokens Int), CarryTokens Int)))
-     -> m (Chan (PID, (t, TransferTokens Int)), Chan ((t, TransferTokens Int), CarryTokens Int), Chan ())
+     -- -> (Chan (SID, (MulticastF2P t, TransferTokens Int)), Chan (SID, ((t, TransferTokens Int), CarryTokens Int)))
+     -> (Chan (SID, (MulticastF2P t, CarryTokens Int)), Chan (SID, ((t, TransferTokens Int), CarryTokens Int)))
+     -- -> m (Chan (PID, (t, TransferTokens Int)), Chan ((t, TransferTokens Int), CarryTokens Int), Chan ())
+     -> m (Chan (PID, (t, CarryTokens Int)), Chan ((t, TransferTokens Int), CarryTokens Int), Chan ())
 manyMulticast pid parties (f2p, p2f) = do
   p2f' <- newChan
   f2p' <- newChan
@@ -129,11 +131,14 @@ manyMulticast pid parties (f2p, p2f) = do
     (ssid, mf) <- readChan f2p
     let (pidS :: PID, _ :: [PID], _ :: String) = readNote "manyMulti" $ snd ssid
     case mf of
-      (MulticastF2P_OK, DeliverTokensWithMessage _) -> do
+      --(MulticastF2P_OK, DeliverTokensWithMessage _) -> do
+      (MulticastF2P_OK, SendTokens _) -> do
                      require (pidS == pid) "ok delivered to wrong pid"
                      writeChan cOK ()
-      (MulticastF2P_Deliver m, DeliverTokensWithMessage t) -> do
-                     writeChan f2p' (pidS, (m, DeliverTokensWithMessage t))
+      --(MulticastF2P_Deliver m, DeliverTokensWithMessage t) -> do
+      (MulticastF2P_Deliver m, SendTokens t) -> do
+                     writeChan f2p' (pidS, (m, SendTokens t))
+                     --writeChan f2p' (pidS, (m, DeliverTokensWithMessage t))
   return (f2p', p2f', cOK)
 
 readBangMulticast pid parties f2p = do
@@ -201,7 +206,8 @@ testACastBenign = runITMinIO 120 $ execUC testEnvACastIdeal (idealProtocol) (run
 
 type Transcript = [Either
                          (SttCruptA2Z
-                            (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+                            --(SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+                            (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
                             (Either
                                (ClockF2A (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)))
                                (SID, (MulticastF2A (ACastMsg String), TransferTokens Int))))
@@ -293,7 +299,8 @@ testACastReal = runITMinIO 120 $ execUC
 
 protACastBroken :: MonadAsyncP m => ACastTVariant -> ACastRVariant -> ACastDVariant ->
                                     Protocol ((ClockP2F (ACastP2F String)), CarryTokens Int) (ACastF2P String)
-                                             (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+                                             --(SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+                                             (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
                                              (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)) m
 protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
   -- Sender and set of parties is encoded in SID
@@ -374,7 +381,8 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
 
   -- Receive messages from multicast
   fork $ forever $ do
-    (pid', (m, DeliverTokensWithMessage a)) <- recv
+    --(pid', (m, DeliverTokensWithMessage a)) <- recv
+    (pid', (m, SendTokens a)) <- recv
     liftIO $ putStrLn $ "[protACast] " ++ show ?pid ++ "Received message " ++ show m ++ " from fMulticast"
     if a>=0 then do
       tk <- readIORef tokens
@@ -460,7 +468,8 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
 testEnvACastBrokenValidity
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) ((ClockP2F (ACastP2F String)), CarryTokens Int)
-     (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+     --(SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+     (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
                   (Either (ClockF2A (SID,((ACastMsg String, TransferTokens Int), CarryTokens Int)))
                           (SID, (MulticastF2A (ACastMsg String), TransferTokens Int))))
      ((SttCruptZ2A (ClockP2F (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)))
@@ -530,7 +539,8 @@ testEnvACastBrokenValidity z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
 testEnvACastBrokenAgreement
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) ((ClockP2F (ACastP2F String)), CarryTokens Int)
-     (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+     --(SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+     (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
                   (Either (ClockF2A (SID,((ACastMsg String, TransferTokens Int), CarryTokens Int)))
                           (SID, (MulticastF2A (ACastMsg String), TransferTokens Int))))
      ((SttCruptZ2A (ClockP2F (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)))
@@ -609,7 +619,8 @@ testEnvACastBrokenAgreement z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = 
 testEnvACastBrokenReliability
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) ((ClockP2F (ACastP2F String)), CarryTokens Int)
-     (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+     --(SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+     (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
                   (Either (ClockF2A (SID,((ACastMsg String, TransferTokens Int), CarryTokens Int)))
                           (SID, (MulticastF2A (ACastMsg String), TransferTokens Int))))
      ((SttCruptZ2A (ClockP2F (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)))
@@ -677,6 +688,11 @@ testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
   () <- readChan pump
   writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice3, (MulticastA2F_Deliver "Carol" (ACast_READY "2"), DeliverTokensWithMessage 0))), SendTokens 0)
 
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 10)
+  c <- readChan clockChan
+  
+  printEnvIdeal $ "Runqueue size: " ++ show c
+
   forMseq_ [1..20] $ \x -> do
       () <- readChan pump
       writeChan z2f ClockZ2F_MakeProgress
@@ -694,7 +710,8 @@ testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
 testEnvACastBrokenTermination
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) ((ClockP2F (ACastP2F String)), CarryTokens Int)
-     (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+     --(SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+     (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
                   (Either (ClockF2A (SID,((ACastMsg String, TransferTokens Int), CarryTokens Int)))
                           (SID, (MulticastF2A (ACastMsg String), TransferTokens Int))))
      ((SttCruptZ2A (ClockP2F (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)))
@@ -844,11 +861,12 @@ testCompareBrokenReliability = runITMinIO 120 $ do
   liftIO $ putStrLn ""
   liftIO $ putStrLn ""
   liftIO $ putStrLn "*** RUNNING IDEAL WORLD ***"
-  t2 <- runRandReplay bits $ execUC
-             testEnvACastBrokenReliability
-             (idealProtocolToken)
-             (runAsyncF fACastToken)
-             (runTokenA $ simACastBroken $ prot ())
+  --t2 <- runRandReplay bits $ execUC
+  --           testEnvACastBrokenReliability
+  --           (idealProtocolToken)
+  --           (runAsyncF fACastToken)
+  --           (runTokenA $ simACastBroken $ prot ())
+  let t2 = []
   return (t1 == t2)
 
 testCompareBrokenValidity :: IO Bool
@@ -891,12 +909,14 @@ makeSyncLog handler req = do
 {-- TODO: Simulator for ACast --}
 simACastBroken :: MonadAdversaryToken m => (MonadProtocol m => Protocol ((ClockP2F (ACastP2F String)), CarryTokens Int)
                                                                         (ACastF2P String)
-                                                                        (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+                                                                        --(SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+                                                                        (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
                                                                         (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)) m) ->
                                            Adversary ((SttCruptZ2A (ClockP2F (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)))
                                                      (Either (ClockA2F)
                                                              (SID, (MulticastA2F (ACastMsg String), TransferTokens Int)))), CarryTokens Int)
-                                               (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+                                               --(SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+                                               (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
                                                      (Either (ClockF2A  (SID,((ACastMsg String, TransferTokens Int), CarryTokens Int)))
                                                              (SID, (MulticastF2A (ACastMsg String), TransferTokens Int))))
                                                (ACastF2P String) (ClockP2F (ACastP2F String, CarryTokens Int))
@@ -1032,6 +1052,8 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
             SttCruptZ2A_A2P pm -> writeChan a2p' pm
         fork $ forever $ do
           m <- readChan f2a'
+          liftIO $ putStrLn $ "\n\t >>>>>>>>>>>>>\n"
+
           liftIO $ putStrLn $ show "f2a'" ++ show m
           writeChan a2z' $ SttCruptA2Z_F2A m
         fork $ forever $ do
