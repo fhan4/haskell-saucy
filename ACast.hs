@@ -216,7 +216,8 @@ type Transcript = [Either
 testEnvACast
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) ((ClockP2F (ACastP2F String)), CarryTokens Int)
-     (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+     --(SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
+     (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
                   (Either (ClockF2A (SID,((ACastMsg String, TransferTokens Int), CarryTokens Int)))
                           (SID, (MulticastF2A (ACastMsg String), TransferTokens Int))))
      ((SttCruptZ2A (ClockP2F (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)))
