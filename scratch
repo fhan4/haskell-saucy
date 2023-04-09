@@ -1,0 +1,17 @@
+s_broadcast: N
+is dissent worse case is 2 s_broacasts: 2N
+bcast AUX: N
+
+N=4
+
+--------------------------------------------
+
+> honest party inputs
+> send corrupt alie message (VAL, ECHO, READY)
+> deliver some index
+> make progress
+
+requires parties to handle all manner of messages out of order
+--> forces UC spec to be closer to reality
+
+CHECK: would ACast handle this?

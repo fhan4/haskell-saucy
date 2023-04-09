@@ -384,3 +384,43 @@ runAsyncP prot (z2p, p2z) (f2p, p2f) = do
   let ?pass = pass in
      prot (z2p, p2z) (f2p,p2f')
         
+
+type MonadTestableP m = (MonadProtocol m,
+                            ?pass :: m (),
+                            ?require :: Bool -> String -> m ())
+
+runTestableP :: MonadProtocol m =>
+  (MonadTestableP m => Protocol z2p p2z f2p p2f m) ->
+    Protocol z2p p2z f2p (ClockP2F p2f) m
+runTestableP prot (z2p, p2z) (f2p, p2f) = do
+  let pass = do
+        writeChan p2f ClockP2F_Pass
+  f2p' <- newChan
+  z2p' <- newChan
+  p2f' <- wrapWrite ClockP2F_Through p2f
+  
+  failed <- newIORef False
+  let require cond msg = 
+          if not cond then do
+            liftIO $ putStrLn $ msg
+            ?pass
+            writeIORef failed True
+          else return ()
+  
+  fork $ forever $ do
+    m <- readChan f2p
+    f <- readIORef failed
+    if f then ?pass
+    else writeChan f2p' m
+
+  fork $ forever $ do
+    m <- readChan z2p
+    f <- readIORef failed 
+    if f then ?pass
+    else writeChan z2p' m
+
+  let ?pass = pass
+      ?require = require in
+          prot (z2p', p2z) (f2p', p2f')
+    
+  

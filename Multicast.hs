@@ -104,7 +104,10 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
       fork $ forever $ do
          (MulticastA2F_Deliver pidR m, DeliverTokensWithMessage t) <- readChan a2f
          del <- readIORef delivered
-         if member pidR del then return ()
+         if member pidR del then do
+					liftIO $ putStrLn $ "im getting stuck here"
+					?pass
+					--return ()
          else do
            writeIORef delivered (insert pidR () del)
            --writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage t))  -- Send tokens as specified by the Adversary (which should receive these tokens from the Environment)

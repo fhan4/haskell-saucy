@@ -48,11 +48,13 @@ type AsyncInput = (AsyncCmd, Tokens)
 
 {- Generate a list of indices for run queue deliver requests.
    The output list indices can all always be execued if `n` is set correctly -}
+rqIndexListWeights f n = [ (1, return []), (5, if n==0 then return [] else (:) <$> choose (0,n-1) <*> (f (n-1))) ]
+
 rqIndexList :: Int -> Gen [Int]
-rqIndexList n = frequency
-    [ (1,return []),
-      (5, if n==0 then return [] else (:) <$> choose (0,n-1) <*> (rqIndexList (n-1)))
-    ] 
+rqIndexList n = frequency $ (rqIndexListWeights rqIndexList n)
+      --[ (1,return []),
+    --  (5, if n==0 then return [] else (:) <$> choose (0,n-1) <*> (rqIndexList (n-1)))
+    --] 
 
 rqDeliverList :: Int -> Gen [AsyncCmd]
 rqDeliverList n = frequency

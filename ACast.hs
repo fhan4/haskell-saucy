@@ -256,6 +256,7 @@ testEnvACast z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
 
   -- Have Alice write a message
   () <- readChan pump
+  --writeChan z2p ("Alice", ((ClockP2F_Through $ ACastP2F_Input "I'm Alice"), SendTokens 1000))
   writeChan z2p ("Alice", ((ClockP2F_Through $ ACastP2F_Input "I'm Alice"), SendTokens 1000))
 
   -- Empty the queue
@@ -316,15 +317,41 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
   tokens <- newIORef 0
 
   -- Require means print the error then pass
+  --let require cond msg = 
+  --      if not cond then do
+  --        liftIO $ putStrLn $ msg
+  --        ?pass
+  --        readChan =<< newChan -- block without returning
+  --      else return ()
+  
+{- TESTING MODS -}          
+  f2p' <- newChan
+  z2p' <- newChan
+  failed <- newIORef False
+
   let require cond msg = 
         if not cond then do
           liftIO $ putStrLn $ msg
           ?pass
-          readChan =<< newChan -- block without returning
-        else return ()
-                   
+          writeIORef failed True 
+          return False
+        else return True
+
+  fork $ forever $ do
+    m <- readChan f2p
+    f <- readIORef failed
+    if f then ?pass
+    else writeChan f2p' m
+  
+  fork $ forever $ do
+    m <- readChan z2p
+    f <- readIORef failed
+    if f then ?pass
+    else writeChan z2p' m
+{- TESTING MODS -}
+       
   -- Prepare channels
-  (recvC, multicastC, cOK) <- manyMulticast ?pid parties (f2p, p2f)
+  (recvC, multicastC, cOK) <- manyMulticast ?pid parties (f2p', p2f)
   let multicast (x, DeliverTokensWithMessage st) = do
         tk <- readIORef tokens
         let neededTokens = (length parties) * (st+1)  -- The multicast requires sending st tokens to each party, plus 1 delivery fee for each message
@@ -349,7 +376,7 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
 
   -- Sender provides input
   fork $ do
-    (mf, SendTokens a) <- readChan z2p
+    (mf, SendTokens a) <- readChan z2p'
     if a>=0 then do
       if ?pid == pidS then do
         tk <- readIORef tokens
@@ -363,11 +390,13 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
        ClockP2F_Pass -> ?pass
        ClockP2F_Through (ACastP2F_Input m) -> do
          liftIO $ putStrLn $ "Step 1"
-         require (?pid == pidS) "[protACast]: only sender provides input"
-         multicast (ACast_VAL m, DeliverTokensWithMessage ((length parties)*2))
-         -- Give each party enough tokens for multicasting one round of ECHO and one round of READY
-         -- liftIO $ putStrLn $ "[protACast]: multicast done"
-         writeChan p2z ACastF2P_OK
+         check <- require (?pid == pidS) "[protACast]: only sender provides input"
+         if check then do
+           multicast (ACast_VAL m, DeliverTokensWithMessage ((length parties)*2))
+           -- Give each party enough tokens for multicasting one round of ECHO and one round of READY
+           -- liftIO $ putStrLn $ "[protACast]: multicast done"
+           writeChan p2z ACastF2P_OK
+         else return ()
 
   let n = length parties
   -- let thresh = ceiling (toRational (n+t+1) / 2) -- normal ECHO threshold
@@ -394,13 +423,18 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
     case m of
       ACast_VAL v -> do
           -- Check this is the FIRST such message from the right sender
-          require (pid' == pidS) "[protACast]: VAL(v) from wrong sender"
-          readIORef inputReceived >>= \b -> require (not b) "[protACast]: Too many inputs received"
-          writeIORef inputReceived True
-          multicast $ (ACast_ECHO v, DeliverTokensWithMessage 0)
-          -- Each party should have already received Tokens scheduled by the sender's input, so no need to send more tokens from party to party
-          ?pass
-
+          check <- require (pid' == pidS) "[protACast]: VAL(v) from wrong sender"
+          if check then do
+            check :: Bool <- readIORef inputReceived >>= \b -> require (not b) "[protACast]: Too many inputs received"
+            liftIO $ putStrLn $ "\n\t check: " ++ show check ++ "\n"
+            if check then do
+              writeIORef inputReceived True
+              multicast $ (ACast_ECHO v, DeliverTokensWithMessage 0)
+              -- Each party should have already received Tokens scheduled by the sender's input, so no need to send more tokens from party to party
+              ?pass
+            else return ()
+          else 
+            return ()
       ACast_ECHO v -> do
           thresh <- case variantT of
               ACastTSmall -> return $ floor (toRational (n+t) / 2) -- too few ECHO
@@ -408,24 +442,26 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
               otherwise -> return $ ceiling (toRational (n+t+1) / 2) -- normal ECHO threshold
           ech <- readIORef echoes
           let echV = Map.findWithDefault Map.empty v ech
-          require (not $ Map.member pid' echV) $ "Already echoed"
-          let echV' = Map.insert pid' () echV
-          writeIORef echoes $ Map.insert v echV' ech
-          liftIO $ putStrLn $ "[protACast]"++ ?pid ++" echo updated at " ++ show ?pid
-          liftIO $ putStrLn $ "[protACast]"++ ?pid ++" echo amount " ++ show (Map.size echV')
-          --  Check if ready to decide
-          --liftIO $ putStrLn $ "[protACast] " ++ show n ++ " " ++ show thresh ++ " " ++ show (Map.size echV')
-          if Map.size echV' >= thresh then do
-              liftIO $ putStrLn "Threshold met! Sending ready"            
-              sendReadyOnce v
-              --liftIO $ putStrLn $ "[" ++ ?pid ++ "] Sending READY"
-              --writeIORef sentReady True
-              --multicast $ (ACast_READY v, DeliverTokensWithMessage 0)
-          else do
-              liftIO $ putStrLn $ "[protACast]"++ ?pid ++" not met yet"
-              return ()
-          liftIO $ putStrLn $ "[protACast]"++ ?pid ++" return OK"
-          ?pass
+          check <- require (not $ Map.member pid' echV) $ "Already echoed"
+          if check then do
+            let echV' = Map.insert pid' () echV
+            writeIORef echoes $ Map.insert v echV' ech
+            liftIO $ putStrLn $ "[protACast]"++ ?pid ++" echo updated at " ++ show ?pid
+            liftIO $ putStrLn $ "[protACast]"++ ?pid ++" echo amount " ++ show (Map.size echV')
+            --  Check if ready to decide
+            --liftIO $ putStrLn $ "[protACast] " ++ show n ++ " " ++ show thresh ++ " " ++ show (Map.size echV')
+            if Map.size echV' >= thresh then do
+                liftIO $ putStrLn "Threshold met! Sending ready"            
+                sendReadyOnce v
+                --liftIO $ putStrLn $ "[" ++ ?pid ++ "] Sending READY"
+                --writeIORef sentReady True
+                --multicast $ (ACast_READY v, DeliverTokensWithMessage 0)
+            else do
+                liftIO $ putStrLn $ "[protACast]"++ ?pid ++" not met yet"
+                return ()
+            liftIO $ putStrLn $ "[protACast]"++ ?pid ++" return OK"
+            ?pass
+          else return ()
 
       ACast_READY v -> do
           readyThresh <- case variantR of
@@ -440,30 +476,32 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
           -- Check each signature
           rdy <- readIORef readys
           let rdyV = Map.findWithDefault Map.empty v rdy
-          require (not $ Map.member pid' rdyV) $ "Already readyd"
-          let rdyV' = Map.insert pid' () rdyV
-          writeIORef readys $ Map.insert v rdyV' rdy
-          liftIO $ putStrLn $ "[protACast]"++ ?pid ++" ready updated"
+          check <- require (not $ Map.member pid' rdyV) $ "Already readyd"
+          if check then do
+            let rdyV' = Map.insert pid' () rdyV
+            writeIORef readys $ Map.insert v rdyV' rdy
+            liftIO $ putStrLn $ "[protACast]"++ ?pid ++" ready updated"
 
-          dec <- readIORef decided
-          --if dec then
-          --  liftIO $ putStrLn $ "<><><><><> [protACast] " ++ ?pid ++ " decided already"
-          --else return ()
-          if dec then ?pass
-          else do
-            let ct = Map.size rdyV'
-            if ct >= readyThresh then do
-              liftIO $ putStrLn $ "[protACast]"++ ?pid ++" readying"
-              sendReadyOnce v
-              return()
-            else
-              return()
-            liftIO $ putStrLn $ "[protACast] " ++ show ?pid ++ " returned from multicast"
-            if ct == decideThresh then do
-              --liftIO $ putStrLn $ "<><><><><> [protACast] " ++ ?pid ++ " decided already"
-              writeIORef decided True
-              writeChan p2z (ACastF2P_Deliver v)
-            else ?pass
+            dec <- readIORef decided
+            --if dec then
+            --  liftIO $ putStrLn $ "<><><><><> [protACast] " ++ ?pid ++ " decided already"
+            --else return ()
+            if dec then ?pass
+            else do
+              let ct = Map.size rdyV'
+              if ct >= readyThresh then do
+                liftIO $ putStrLn $ "[protACast]"++ ?pid ++" readying"
+                sendReadyOnce v
+                return()
+              else
+                return()
+              liftIO $ putStrLn $ "[protACast] " ++ show ?pid ++ " returned from multicast"
+              if ct == decideThresh then do
+                --liftIO $ putStrLn $ "<><><><><> [protACast] " ++ ?pid ++ " decided already"
+                writeIORef decided True
+                writeChan p2z (ACastF2P_Deliver v)
+              else ?pass
+          else return ()
   return ()
 
 testEnvACastBrokenValidity
@@ -811,6 +849,7 @@ testEnvACastBrokenTermination z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
 testACastTermination :: IO Transcript
 testACastTermination = runITMinIO 120 $ execUC
   testEnvACastBrokenTermination
+  --(runAsyncP $ protACastBroken ACastTCorrect ACastRCorrect ACastDCorrect)
   (runAsyncP $ protACastBroken ACastTCorrect ACastRCorrect ACastDCorrect)
   (runAsyncF $ bangFAsync fMulticastToken)
   dummyAdversaryToken
@@ -824,9 +863,9 @@ testACastBroken = runITMinIO 120 $ execUC
 
 testCompareBrokenAgreement :: IO Bool
 testCompareBrokenAgreement = runITMinIO 120 $ do
-  let variantT = ACastTSmall
+  let variantT = ACastTCorrect
   let variantR = ACastRCorrect
-  let variantD = ACastDSmall
+  let variantD = ACastDCorrect
   let prot () = protACastBroken variantT variantR variantD
   liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
   t1R <- runRandRecord $ execUC
@@ -1049,7 +1088,9 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
           syncLeaks
           printAdv $ "forwarding into to sandbox"
           case mf of
-            SttCruptZ2A_A2F f -> writeChan a2f' f
+            SttCruptZ2A_A2F f -> do
+              liftIO $ putStrLn $ "writing message " ++ show f ++ " to sbxf"
+              writeChan a2f' f
             SttCruptZ2A_A2P pm -> writeChan a2p' pm
         fork $ forever $ do
           m <- readChan f2a'
@@ -1075,11 +1116,20 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
     Left m -> writeChan z2a m
     Right m -> writeChan f2a m
 
+  once <- newIORef False
+  times <- newIORef 0
+
   fork $ forever $ do
       () <- readChan sbxpump
       -- undefined
+      t <- readIORef times
+      modifyIORef times $ (+) 1
       ?pass
       return ()
+      --else 
+      --  return ()
+      -- ?pass
+      --return ()
   return ()
 
 testACastIdeal :: IO Transcript
@@ -1088,7 +1138,6 @@ testACastIdeal = runITMinIO 120 $ execUC
   (idealProtocolToken)
   (runAsyncF $ fACastToken)
   (runTokenA $ simACastBroken $ protACastBroken ACastTCorrect ACastRCorrect ACastDCorrect)
-
 
 {--
  What are the options available to the environment?

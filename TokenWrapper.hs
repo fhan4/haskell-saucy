@@ -15,7 +15,7 @@ import Control.Concurrent.MonadIO
 import Control.Monad (forever)
 
 import Data.IORef.MonadIO
-import Data.Map.Strict (member, empty, insert, Map)
+import Data.Map.Strict (member, empty, insert, Map, (!))
 import qualified Data.Map.Strict as Map
 
 
@@ -114,6 +114,7 @@ runTokenA a (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
   return ()
 
 dummyAdversaryToken :: MonadAdversary m => Adversary ((SttCruptZ2A b d), CarryTokens Int)
+                                                     --(SttCruptA2Z a (Either (ClockF2A (SID, (c, CarryTokens Int))) f2a))
                                                      (SttCruptA2Z a (Either (ClockF2A (SID, (c, CarryTokens Int))) f2a))
                                                      a b (Either (ClockF2A (SID, (c, CarryTokens Int))) f2a) d m
 dummyAdversaryToken (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
@@ -138,3 +139,116 @@ idealProtocolToken (z2p, p2z) (f2p, p2f) = do
     --liftIO $ putStrLn $ "idealProtocol received from f2p " ++ pid
     writeChan p2z m
   return ()
+
+--_bangFAsyncInstanceToken :: MonadFunctionalityAsync m => Chan ((SID, l), CarryTokens Int) -> Chan (Chan (), Chan ()) -> (forall m. MonadFunctionalityAsync m (l, CarryTokens Int) => Functionality p2f f2p a2f f2a Void Void m) ->  Functionality p2f f2p a2f f2a Void Void m
+--_bangFAsyncInstanceToken _leak _eventually f = f
+--  where
+--    ?leak = \(l, t) -> writeChan _leak ((?sid, l), t)
+--    ?eventually = \m -> do
+--      cb :: Chan () <- newChan
+--      ok :: Chan () <- newChan
+--      writeChan _eventually (cb, ok)
+--      fork $ readChan cb >> m
+--      readChan ok
+--
+--
+--bangFAsyncToken
+--    :: MonadFunctionalityAsync m ((SID, l), CarryTokens Int) =>
+--	:: MonadFunctionalityAsync m (SID, l) 
+--       (forall m'. MonadFunctionalityAsync m' l => Functionality p2f f2p a2f f2a Void Void m') -> 
+--       Functionality ((SID, p2f), CarryTokens Int) ((SID, f2p), CarryTokens Int) ((SID, a2f), CarryTokens Int) (SID, f2a) Void Void m 
+--bangFAsyncToken f (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
+--    _leak <- newChan
+--    _eventually <- newChan
+--
+--    fork $ forever $ do
+--        (cb,ok) <- readChan _eventually
+--        ?eventually $ do
+--            writeChan cb ()
+--        writeChan ok ()
+--
+--    fork $ forever $ do
+--        l <- readChan _leak
+--        leak l
+--
+--    bangFToken (_bangFAsyncInstanceToken _leak _eventually f) (p2f, f2p) (a2f, f2a) (z2f, f2z)
+--
+--bangFToken
+--  :: MonadFunctionality m =>
+--     (forall m'. MonadFunctionality m' => Functionality p2f f2p a2f f2a Void Void m') ->
+--     Functionality ((SID, p2f), CarryTokens Int) ((SID, f2p), CarryTokens Int) 
+--     ((SID, a2f), CarryTokens Int) (SID, f2a) Void Void m
+--bangFToken f (p2f, f2p) (a2f, f2a) _ = do
+--  -- Store a table that maps each SSID to a channel (f2p,a2p) used
+--  -- to communicate with each subinstance of !f
+--  p2ssid <- newIORef empty
+--  a2ssid <- newIORef empty
+--
+--  tokens <- newIORef 0
+--
+--  let newSsid ssid = do
+--        liftIO $ putStrLn $ "[" ++ show ?sid ++ "] Creating new subinstance with ssid: " ++ show ssid
+--        --let newSsid' _2ssid f2_ tag = do
+--        --      ff2_ <- newChan;
+--        --      _2ff <- newChan;
+--        --      fork $ forever $ do
+--        --      -- m := (pid, m')
+--        --        ((pid, m), SendTokens x) <- readChan ff2_
+--        --        --liftIO $ putStrLn $ "!F wrapper f->_ received " ++ tag -- ++ " " ++ show m
+--        --      -- writing ((ssid, (pid, m')), SendTokens x)
+--        --        writeChan f2_ ((ssid, (pid, m)), SendTokens x)
+--        --      modifyIORef _2ssid $ insert ssid _2ff
+--        --      return (_2ff, ff2_)
+--        f2p' <- wrapWrite (\(_, ((pid, m), tokens)) -> (pid, ((ssid, m), tokens))) f2p
+--        ff2p :: Chan ((PID, f2p), CarryTokens Int)  <- newChan ;
+--        p2ff :: Chan (PID, (p2f, CarryTokens Int))  <- newChan;
+--        fork $ forever $ do
+--            --((pidR, m), t) <- readChan ff2p
+--            (m, t) <- readChan ff2p
+--            --writeChan f2p' ((ssid, (pidR, m)), t)
+--            --writeChan f2p' ((ssid, m), t)
+--            writeChan f2p' (ssid, (m, t))
+--        modifyIORef p2ssid $ insert ssid p2ff
+--        --p <- newSsid' p2ssid f2p' "f2p"
+--        let p = (p2ff, ff2p)
+--        
+--        ff2a :: Chan (f2a, CarryTokens Int) <- newChan;
+--        a2ff :: Chan (a2f, CarryTokens Int) <- newChan;
+--        fork $ forever $ do
+--            m <- readChan ff2a
+--            writeChan f2a (ssid, m)
+--        modifyIORef a2ssid $ insert ssid a2ff
+--        let a = (a2ff, ff2a)
+--
+--        --a <- newSsid' a2ssid f2a  "f2a"
+--        fork $ let ?sid = (extendSID ?sid (fst ssid) (snd ssid)) in do
+--          liftIO $ putStrLn $ "in forked instance: " ++ show ?sid
+--          f p a (undefined, undefined)
+--        return ()
+--
+--  let getSsid _2ssid ssid = do
+--        b <- return . member ssid =<< readIORef _2ssid
+--        if not b then newSsid ssid else return ()
+--        readIORef _2ssid >>= return . (! ssid)
+--
+--  -- Route messages from parties to functionality
+--  fork $ forever $ do
+--    (pid, ((ssid, m), tks)) <- readChan p2f
+--    if tks == 0 then error "multisession needs 1 token at least"
+--    else do
+--      tk <- readIORef tokens
+--      writeIORef tokens (tk+1)
+--      --liftIO $ putStrLn $ "!F wrapper p->f received " ++ show ssid
+--      --getSsid p2ssid ssid >>= flip writeChan (pid, m)
+--      getSsid p2ssid ssid >>= flip writeChan (pid, (m,tks-1))
+--      
+--
+--  -- Route messages from adversary to functionality
+--  fork $ forever $ do
+--    ((ssid, m), tokens) <- readChan a2f
+--    --liftIO $ putStrLn $ "!F wrapper a->f received " ++ show ssid
+--    getSsid a2ssid ssid >>= flip writeChan (m, tokens)
+--
+--  return ()
+ 
+
