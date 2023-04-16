@@ -22,6 +22,11 @@ import qualified Data.Map.Strict as Map
 
 data BenOrMsg = One Int Bool | Two Int | TwoD Int Bool deriving (Show, Eq, Read)
 
+data BenOrOneVariant = BenOrOneSmall | BenOrOneLarge | BenOrOneCorrect deriving (Show, Eq)
+data BenOrTwoVariant = BenOrTwoSmall | BenOrTwoLarge | BenOrTwoCorrect deriving (Show, Eq)
+data BenOrOneTwoVariant = BenOrOneTwoSmall | BenOrOneTwoLarge | BenOrOneTwoCorrect deriving (Show, Eq)
+data BenOrTwoDVariant = BenOrTwoDSmall | BenOrTwoDLarge | BenOrTwoDCorrect deriving (Show, Eq)
+
 -- Give (fBang fMulticast) a nicer interface
 manyMulticast :: MonadProtocol m =>
      PID -> [PID]
@@ -105,8 +110,33 @@ protBenOr (z2p, p2z) (f2p, p2f) = do
           readChan =<< newChan -- block without returning
         else return ()
   
+  {- TESTING MODS -}
+  f2p' <- newChan
+  z2p' <- newChan
+  failed <- newIORef False
+
+  let require cond msg = do
+          if not cond then do
+            liftIO $ putStrLn $ msg
+            ?pass
+            writeIORef failed True
+            return False
+          else return True
+
+  fork $ forever $ do
+    m <- readChan f2p
+    f <- readIORef failed
+    if f then ?pass
+    else writeChan f2p' m
+
+  fork $ forever $ do
+    m <- readChan z2p
+    f <- readIORef failed
+    if f then ?pass
+    else writeChan z2p' m
+
   -- Prepare channels
-  (recvC, multicastC, cOK) <- manyMulticast ?pid parties (f2p, p2f)
+  (recvC, multicastC, cOK) <- manyMulticast ?pid parties (f2p', p2f) --(f2p, p2f)
   
   let multicast (x, DeliverTokensWithMessage st) = do
         tk <- readIORef tokens
@@ -118,7 +148,7 @@ protBenOr (z2p, p2z) (f2p, p2f) = do
    
   round <- newIORef (1 :: Int)
 
-  (mf, SendTokens a) <- readChan z2p
+  (mf, SendTokens a) <- readChan z2p' --z2p
   require (a>0) "Sending 0 tokens with input"
   tk <- readIORef tokens
   writeIORef tokens (tk+a)
@@ -147,6 +177,10 @@ protBenOr (z2p, p2z) (f2p, p2f) = do
       writeIORef decision m
       writeChan p2z BenOrF2P_OK
 
+  fork $ forever $ do
+    m <- readChan z2p
+    ?pass
+
   let newRoundFrom r = do
             liftIO $ putStrLn $ "\t[ " ++ show ?pid ++ " ] new round " ++ show r ++ " -> " ++ show (r+1)
             d <- readIORef decision
@@ -166,20 +200,25 @@ protBenOr (z2p, p2z) (f2p, p2f) = do
             r <- readIORef round
             nts <- readIORef numTwos
             -- crit threshold of twos just to check others
-            if (nts == (n-t)) then do
+            --if (nts == (n-t)) then do
+            if (nts == (n-t-1)) then do
               liftIO $ putStrLn $ "\t[ " ++ show ?pid ++ " ] N-t achieved"
               nt0 <- readIORef numTwo0
               nt1 <- readIORef numTwo1 
               -- if at least one honest then set x_p = True / False for next round
-              if (nt0 >= t+1) then writeIORef decision False
-              else if (nt1 >= t+1) then writeIORef decision True
+              --if (nt0 >= t+1) then writeIORef decision False
+              if (nt0 >= t) then writeIORef decision False
+              --else if (nt1 >= t+1) then writeIORef decision True
+              else if (nt1 >= t) then writeIORef decision True
               else return ()
               newRoundFrom r
               -- if threshold then decide that value
-              if (nt0 >= ((n+t) `div` 2)) then do
+              --if (nt0 >= ((n+t) `div` 2)) then do
+              if (nt0 >= ((n+t) `div` 2)-1) then do
                 writeIORef decision False
                 return True
-              else if (nt1 >= ((n+t) `div` 2)) then do
+              --else if (nt1 >= ((n+t) `div` 2)) then do
+              else if (nt1 >= ((n+t) `div` 2)-1) then do
                 writeIORef decision True
                 return True
               else do
@@ -214,16 +253,18 @@ protBenOr (z2p, p2z) (f2p, p2f) = do
             else error "not a 0 or 1"
 
             total <- (readIORef numOne0 >>= \n0 -> readIORef numOne1 >>= (\n1 -> return (n0 + n1)))
-            if total == (n - t) then do
+            --if total == (n - t) then do
+            if total == (n - t - 1) then do
               liftIO $ putStrLn $ "[BenOr " ++ show ?pid ++ "] reached 1 N-t"
               num0 <- readIORef numOne0
               num1 <- readIORef numOne1
               writeIORef alreadyOned True
               -- TODO: maybe we dont' send any import and rely on Z for giving enough to everyone
-              if (num0 > ((n+t) `div` 2)) then do
+{- this is turnd smaller and shoult be > not >= -}
+              if (num0 >= ((n+t) `div` 2)) then do
                 multicast $ ((TwoD r False ), DeliverTokensWithMessage 0)
                 ?pass
-              else if (num1 >   ((n+t) `div` 2)) then do
+              else if (num1 >= ((n+t) `div` 2)) then do
                 multicast $ ((TwoD r True ), DeliverTokensWithMessage 0)
                 ?pass
               else do

@@ -82,43 +82,228 @@ performBenOrEnv benOrConfig cmdList z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump
     readChan clockChan
     let n = length parties
 
-    forMseq_ cmdList $ \cmd -> do
-        case cmd of
-            Left ((CmdBenOrP2F pid' x'), st') -> do
-                writeChan z2p $ (pid', ((ClockP2F_Through $ BenOrP2F_Input x'), SendTokens 32))
-                readChan pump
-            Left ((CmdOne ssid' pid' r' x' dt'), st') -> do
-                writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssid', (MulticastA2F_Deliver pid' (One r' x'), DeliverTokensWithMessage 0))), SendTokens 0)
-                readChan pump
-            Left ((CmdTwo ssid' pid' r' dt'), st') -> do
-                writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssid', (MulticastA2F_Deliver pid' (Two r'), DeliverTokensWithMessage 0))), SendTokens 0)
-                readChan pump
-            Left ((CmdTwoD ssid' pid' r' x' dt'), st') -> do
-                writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssid', (MulticastA2F_Deliver pid' (TwoD r' x'), DeliverTokensWithMessage 0))), SendTokens 0)
-                readChan pump
-            Right ((CmdDeliver idx'), st') -> do
-                writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens 0)
-                readChan pump
-            Right ((CmdGetCount), st') -> do     
-                writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 0)
-                readChan clockChan
-                return ()
-            Right ((CmdMakeProgress), _) -> do
-                writeChan z2f ClockZ2F_MakeProgress
-                readChan pump
+    forMseq_ cmdList $ \cmd -> do 
+        envExecAsyncCmd z2p z2a z2f clockChan pump cmd envExecBenOrCmd
+        --case cmd of
+        --    Left ((CmdBenOrP2F pid' x'), st') -> do
+        --        writeChan z2p $ (pid', ((ClockP2F_Through $ BenOrP2F_Input x'), SendTokens 32))
+        --        readChan pump
+        --    Left ((CmdOne ssid' pid' r' x' dt'), st') -> do
+        --        writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssid', (MulticastA2F_Deliver pid' (One r' x'), DeliverTokensWithMessage 0))), SendTokens 0)
+        --        readChan pump
+        --    Left ((CmdTwo ssid' pid' r' dt'), st') -> do
+        --        writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssid', (MulticastA2F_Deliver pid' (Two r'), DeliverTokensWithMessage 0))), SendTokens 0)
+        --        readChan pump
+        --    Left ((CmdTwoD ssid' pid' r' x' dt'), st') -> do
+        --        writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssid', (MulticastA2F_Deliver pid' (TwoD r' x'), DeliverTokensWithMessage 0))), SendTokens 0)
+        --        readChan pump
+        --    Right ((CmdDeliver idx'), st') -> do
+        --        writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens 0)
+        --        readChan pump
+        --    Right ((CmdGetCount), st') -> do     
+        --        writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 0)
+        --        readChan clockChan
+        --        return ()
+        --    Right ((CmdMakeProgress), _) -> do
+        --        writeChan z2f ClockZ2F_MakeProgress
+        --        readChan pump
     writeChan outp =<< readIORef transcript
 
+-- TODO: here the integer here is the round number. Therefore we need to parameterize this with a range or rounds. Maybe this way we an see if it reaches consensus or there's a better way to give round numbers and iteratively increase the possible round numbers. 
+
+{- In BenOr the ssids only need to be difference because the round number isn't encoded in them.
+  therefore we can jut generate random ssid numbers for each message without caring too much about it -}
+--benOrGenerator :: Int -> Int -> [Gen SID] -> [PID] -> [Gen Bool] -> Int -> Int -> Gen [Either BenOrInput AsyncInput]
+benOrGenerator :: Int -> Int -> (String -> SID) -> [PID] -> [Gen Bool] -> Int -> Int -> Gen [Either BenOrInput AsyncInput]
+benOrGenerator n numQueue ssid parties inputs round dts = frequency $
+  [ (1, return []), 
+    (10, if n==0 then return []
+         else if numQueue==0 then (benOrGenerator n 0 ssid parties inputs round dts)
+         else (:) <$> (choose (0,numQueue-1) >>= \i -> return (Right (CmdDeliver i, 0))) <*> (benOrGenerator (n-1) (numQueue-1) ssid parties inputs round dts)),
+    (5, if n==0 then return [] else (:) <$> 
+        ((shuffle parties) >>= 
+          (\pl -> oneof inputs >>= 
+            (\i -> (choose (0, 999999) :: Gen Int) >>=
+              (\s -> return (Left (CmdOne (ssid (show s)) (pl !! 0) round i dts, 0)))))) <*> (benOrGenerator (n-1) numQueue ssid parties inputs round dts)),
+    (5, if n==0 then return [] else (:) <$>
+        ((shuffle parties) >>= 
+          (\pl -> oneof inputs >>= 
+            (\i -> (choose (0, 999999) :: Gen Int) >>=
+              (\s -> return (Left (CmdTwo (ssid (show s)) (pl !! 0) round 0, 0)))))) <*> (benOrGenerator (n-1) numQueue ssid parties inputs round dts)),
+    (5, if n==0 then return [] else (:) <$>
+        ((shuffle parties) >>= 
+          (\pl -> oneof inputs >>= 
+            (\i -> (choose (0, 999999) :: Gen Int) >>=
+              (\s -> return (Left (CmdTwoD (ssid (show s)) (pl !! 0) round i 0, 0)))))) <*> (benOrGenerator (n-1) numQueue ssid parties inputs round dts)) 
+  ]
+
+
+envExecBenOrCmd :: (MonadITM m) =>
+  (Chan (PID, ((ClockP2F BenOrP2F), CarryTokens Int))) ->
+  (Chan ((SttCruptZ2A (ClockP2F (SID, ((BenOrMsg, TransferTokens Int), CarryTokens Int))) (Either _ (SID, (MulticastA2F BenOrMsg, TransferTokens Int)))), CarryTokens Int)) ->
+  (Chan ()) -> (Either BenOrInput _) -> m ()
+envExecBenOrCmd z2p z2a pump cmd = do
+  case cmd of
+      Left ((CmdBenOrP2F pid' x'), st') -> do
+          writeChan z2p $ (pid', ((ClockP2F_Through $ BenOrP2F_Input x'), SendTokens 32))
+          readChan pump
+      Left ((CmdOne ssid' pid' r' x' dt'), st') -> do
+          writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssid', (MulticastA2F_Deliver pid' (One r' x'), DeliverTokensWithMessage 0))), SendTokens 0)
+          readChan pump
+      Left ((CmdTwo ssid' pid' r' dt'), st') -> do
+          writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssid', (MulticastA2F_Deliver pid' (Two r'), DeliverTokensWithMessage 0))), SendTokens 0)
+          readChan pump
+      Left ((CmdTwoD ssid' pid' r' x' dt'), st') -> do
+          writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssid', (MulticastA2F_Deliver pid' (TwoD r' x'), DeliverTokensWithMessage 0))), SendTokens 0)
+          readChan pump
+
+
+propUEnvBenOrSafety
+  :: (MonadEnvironment m) =>
+  Environment BenOrF2P ((ClockP2F BenOrP2F), CarryTokens Int)
+     --(SttCruptA2Z (SID, (MulticastF2P BenOrMsg, TransferTokens Int)) 
+     (SttCruptA2Z (SID, (MulticastF2P BenOrMsg, CarryTokens Int)) 
+                  (Either (ClockF2A (SID, ((BenOrMsg, TransferTokens Int), CarryTokens Int)))
+                          (SID, (MulticastF2A BenOrMsg, TransferTokens Int))))
+     ((SttCruptZ2A (ClockP2F (SID, ((BenOrMsg, TransferTokens Int), CarryTokens Int))) 
+                  (Either ClockA2F (SID, (MulticastA2F BenOrMsg, TransferTokens Int)))), CarryTokens Int) Void
+     (ClockZ2F) (BenOrConfig, [Either BenOrInput AsyncInput], Transcript) m
+propUEnvBenOrSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
+  let extendRight conf = show ("", conf)
+  
+  let parties = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank"] :: [PID]
+  let t = 1 :: Int
+  let crupt = "Alice" :: PID
+  let honest = parties \\ [crupt]
+  let sssid = "sidTestACast"
+  let sid = (sssid, show (parties, t, ""))
+  
+  writeChan z2exec $ SttCrupt_SidCrupt sid (Map.fromList [(crupt, ())])
+  
+  transcript <- newIORef []
+  cmdList <- newIORef []  
+  debugLog <- newIORef []
+  thingsHappened <- newIORef 0
+
+  fork $ forever $ do
+    (pid, m) <- readChan p2z
+    modifyIORef transcript (++ [Right (pid, m)])
+    modifyIORef debugLog $ (++ [Right (Right (pid,m))])
+    modifyIORef thingsHappened $ (+) 1
+    printEnvIdeal $ "[testEnvACast]: pid[" ++ pid ++ "] output " ++ show m
+    ?pass
+
+  clockChan <- newChan
+
+  fork $ forever $ do
+    mb <- readChan a2z
+    modifyIORef transcript (++ [Left mb])
+    modifyIORef debugLog $ (++ [Right (Left mb)])
+    case mb of
+      SttCruptA2Z_F2A (Left (ClockF2A_Pass)) -> do
+        printEnvReal $ "Pass"
+        modifyIORef thingsHappened $ (+) 1
+        ?pass
+      SttCruptA2Z_F2A (Left (ClockF2A_Count c)) ->
+        writeChan clockChan c
+      SttCruptA2Z_P2A (pid, m) -> do
+        case m of
+          _ -> do
+            printEnvReal $ "[" ++pid++ "] (corrupt) received: " ++ show m
+            modifyIORef thingsHappened $ (+) 1
+        ?pass
+      SttCruptA2Z_F2A (Left (ClockF2A_Leaks l)) -> do
+        --printEnvIdeal $ "[testEnvACastBroken leaks]: " ++ show l
+        ?pass
+      SttCruptA2Z_F2A (Left (ClockF2A_Advance)) -> do
+        printEnvReal $ "Forced Clock advance"
+        ?pass
+      _ -> error $ "Help!" ++ show mb
+
+  () <- readChan pump
+  modifyIORef cmdList $ (++) [Right (CmdGetCount, 1000)]
+  modifyIORef debugLog $ (++ [Left (Right (CmdGetCount, 1000))])
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 1000)
+  c <- readChan clockChan 
+  
+  let inputs = do [return True, return False]
+ 
+  let checkQueue n = do
+        modifyIORef debugLog $ (++ [Left (Right (CmdGetCount, 0))])
+        modifyIORef cmdList $ (++ [Right (CmdGetCount, 0)])
+        writeChan z2a $ (SttCruptZ2A_A2F (Left ClockA2F_GetCount), SendTokens 0)
+        
+        c <- readChan clockChan
+        liftIO $ putStrLn $ "Z[testEnvACastIdeal]: Events remaining: " ++ show c
+        return (c > 0)
+
+  let inputTokens = 64
+  -- Give somehonest parties some inputs
+  -- choose input values for the honest parties
+  -- should create 6 One messages each 
+  forMseq_ honest $ \h -> do
+    -- choose a boolean
+    x <- liftIO $ generate chooseAny
+    modifyIORef cmdList $ (++ [Left $ (CmdBenOrP2F h x, inputTokens)])
+    modifyIORef debugLog $ (++ [Left (Left (CmdBenOrP2F h x, inputTokens))])
+    writeChan z2p $ (h, ((ClockP2F_Through $ BenOrP2F_Input x), SendTokens inputTokens))
+    readChan pump
+  
+
+  -- go in some limited number of rounds    
+  firstInp <- newIORef []
+  forMseq_ [1..20] $ \r -> do
+    modifyIORef cmdList $ (++) [Right (CmdGetCount, 0)]
+    modifyIORef debugLog $ (++ [Left (Right (CmdGetCount, 0))])
+    writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 0)
+    c <- readChan clockChan 
+    inps <- liftIO $ generate $ benOrGenerator (max 40 c) c (multicastSid sssid crupt parties) parties inputs r 64
+
+    forMseq_ inps $ \i -> do
+      modifyIORef debugLog $ (++ [Left i])
+      modifyIORef cmdList $ (++ [i])
+      envExecAsyncCmd z2p z2a z2f clockChan pump i envExecBenOrCmd
+
+  tr <- readIORef transcript
+  cl <- readIORef cmdList
+  
+  writeChan outp ((sid, parties, (Map.fromList [(crupt,())]), t), cl, tr)
+
+prop_uBenOrTest = monadicIO $ do
+    let prot () = protBenOr
+    (config', c', t') <- run $ runITMinIO 120 $ execUC 
+      propUEnvBenOrSafety
+      (runAsyncP $ prot ()) 
+      (runAsyncF $ bangFAsync fMulticastToken) 
+      dummyAdversaryToken
+    outputs <- newIORef Set.empty
+    forMseq_ [0..(length t')-1] $ \i -> do
+        case (t' !! i) of 
+            Right (pid, BenOrF2P_Deliver m) -> do
+                liftIO $ putStrLn $ "\n\t ############### GOT SOME output " ++ show (t' !! i) ++ "\n"
+                modifyIORef outputs $ Set.insert m
+            Right _ -> return ()
+            Left m -> return ()
+    o <- readIORef outputs
+
+    printYellow ("[Config]\n\n" ++ show config')
+    printYellow ("[Inputs]\n\n" ++ show c')
+
+  -- asserting size is 0 check causes test to fail when some party
+  -- has decided a value (the point being to check how common it is
+  -- for all parties to decide something
+    assert ( (Set.size o) <= 1 )
 
 {- this environment generator is quite structured towards the BenOr protocol where
    where inputs are given, some messages are delivered then messages are sent by corrupt parties
    according to where they are expected by the protocl. 
    The next steps are:
-		1. Create a generic environment that is agnostic to the protocol and takes in 
-			some type of corrut party messages, some type of honest party messages,
-			and randomly chooses from them. Run until interesting things happen. 
-			First check how often something interesting happens.
-		2. create a grammar for correlating state/output to the possible inputs, both
-			corrupt and honest, that the environment can give.
+    1. Create a generic environment that is agnostic to the protocol and takes in 
+      some type of corrut party messages, some type of honest party messages,
+      and randomly chooses from them. Run until interesting things happen. 
+      First check how often something interesting happens.
+    2. create a grammar for correlating state/output to the possible inputs, both
+      corrupt and honest, that the environment can give.
 -}
 propEnvBenOrLiveness
   :: (MonadEnvironment m) => Tokens ->
@@ -280,9 +465,9 @@ prop_benOrLiveness = monadicIO $ do
     printYellow ("[Config]\n\n" ++ show config')
     printYellow ("[Inputs]\n\n" ++ show c')
 
-	-- asserting size is 0 check causes test to fail when some party
-	-- has decided a value (the point being to check how common it is
-	-- for all parties to decide something
+  -- asserting size is 0 check causes test to fail when some party
+  -- has decided a value (the point being to check how common it is
+  -- for all parties to decide something
     assert ( (Set.size o) == 0 )
 
 

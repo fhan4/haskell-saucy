@@ -15,3 +15,14 @@ requires parties to handle all manner of messages out of order
 --> forces UC spec to be closer to reality
 
 CHECK: would ACast handle this?
+
+
+BenOr thresholds
+N-t        One messages
+	if (N+t)/2    One --> TwoD message
+	ese 		  One --> Two message
+
+N-t		   TwoX messages
+	if t+1 		D-messages for v set x = v
+	if (N+t)/2	D-messages decide v
+	else xp = coin flip

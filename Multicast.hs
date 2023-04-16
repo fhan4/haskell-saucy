@@ -57,10 +57,13 @@ fMulticast (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
            writeChan f2p (pidR, MulticastF2P_Deliver m)
   return ()
 
-fMulticastToken :: MonadFunctionalityAsync m ((t, TransferTokens Int), CarryTokens Int) =>
-  --Functionality ((t, TransferTokens Int), CarryTokens Int) (MulticastF2P t, TransferTokens Int)
-    Functionality ((t, TransferTokens Int), CarryTokens Int) (MulticastF2P t, CarryTokens Int)
-                (MulticastA2F t, TransferTokens Int) (MulticastF2A t, TransferTokens Int) Void Void m
+--fMulticastToken :: MonadFunctionalityAsync m ((t, TransferTokens Int), CarryTokens Int) =>
+--  --Functionality ((t, TransferTokens Int), CarryTokens Int) (MulticastF2P t, TransferTokens Int)
+--    Functionality ((t, TransferTokens Int), CarryTokens Int) (MulticastF2P t, CarryTokens Int)
+--                (MulticastA2F t, TransferTokens Int) (MulticastF2A t, TransferTokens Int) Void Void m
+fMulticastToken :: MonadFunctionalityAsync m ((t, TransferTokens Int), CarryTokens Int) => 
+    TokenFunctionality (t, TransferTokens Int) (MulticastF2P t) (MulticastA2F t, TransferTokens Int)
+                        (MulticastF2A t, TransferTokens Int) Void Void m
 fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   -- Sender and set of parties is encoded in SID
   let sid = ?sid :: SID
@@ -80,6 +83,7 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
       -- Only activated by the designated sender
       fork $ forever $ do
         (pid, ((m, DeliverTokensWithMessage st), SendTokens a)) <- readChan p2f
+        --((pid, (m, DeliverTokensWithMessage st)), SendTokens a) <- readChan p2f
         if a>=0 then do
           tk <- readIORef tokens
           writeIORef tokens (tk+a)
@@ -92,11 +96,11 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
               tk <- readIORef tokens
               if tk >=1 then do
                 writeIORef tokens (max 0 (tk-1-st))  -- Burn the delivery fee and send as many requested tokens to the receiver as possible
-                --writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage (min st (tk-1))))  -- Includes either st or all tokens left in case of insufficient reserves
                 writeChan f2p (pidR, (MulticastF2P_Deliver m, SendTokens (min st (tk-1))))  -- Includes either st or all tokens left in case of insufficient reserves
+                --writeChan f2p ((pidR, MulticastF2P_Deliver m), SendTokens (min st (tk-1))) 
               else ?pass --return()
-          --writeChan f2p (pidS, (MulticastF2P_OK, DeliverTokensWithMessage 0))
           writeChan f2p (pidS, (MulticastF2P_OK, SendTokens 0))
+          --writeChan f2p ((pidS, MulticastF2P_OK), SendTokens 0)
         else error "multicast activated not by sender"
   else do
       -- If sender is corrupted, arbitrary messages can be delivered (once) to parties in any order
@@ -104,14 +108,11 @@ fMulticastToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
       fork $ forever $ do
          (MulticastA2F_Deliver pidR m, DeliverTokensWithMessage t) <- readChan a2f
          del <- readIORef delivered
-         if member pidR del then do
-					liftIO $ putStrLn $ "im getting stuck here"
-					?pass
-					--return ()
+         if member pidR del then ?pass
          else do
            writeIORef delivered (insert pidR () del)
-           --writeChan f2p (pidR, (MulticastF2P_Deliver m, DeliverTokensWithMessage t))  -- Send tokens as specified by the Adversary (which should receive these tokens from the Environment)
            writeChan f2p (pidR, (MulticastF2P_Deliver m, SendTokens t))  -- Send tokens as specified by the Adversary (which should receive these tokens from the Environment)
+           --writeChan f2p ((pidR, MulticastF2P_Deliver m), SendTokens t)
   return ()
 
 {-- An !fAuth hybrid protocol realizing fMulticast --}

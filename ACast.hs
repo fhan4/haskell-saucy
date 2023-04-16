@@ -329,10 +329,11 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
   z2p' <- newChan
   failed <- newIORef False
 
-  let require cond msg = 
+  let require cond msg = do
         if not cond then do
           liftIO $ putStrLn $ msg
           ?pass
+          --readChan =<< newChan
           writeIORef failed True 
           return False
         else return True
@@ -504,6 +505,12 @@ protACastBroken variantT variantR variantD (z2p, p2z) (f2p, p2f) = do
           else return ()
   return ()
 
+
+{- 
+  from the environment code it looks like validity here means that 
+  parties only decide a value that the leader proposed. Here the leader, Alice,
+  proposes 1 but corrupt Dave tries to get others to agree to 2.
+-}
 testEnvACastBrokenValidity
   :: (MonadEnvironment m) =>
   Environment (ACastF2P String) ((ClockP2F (ACastP2F String)), CarryTokens Int)
@@ -863,9 +870,9 @@ testACastBroken = runITMinIO 120 $ execUC
 
 testCompareBrokenAgreement :: IO Bool
 testCompareBrokenAgreement = runITMinIO 120 $ do
-  let variantT = ACastTCorrect
-  let variantR = ACastRCorrect
-  let variantD = ACastDCorrect
+  let variantT = ACastTSmall
+  let variantR = ACastRSmall
+  let variantD = ACastDSmall
   let prot () = protACastBroken variantT variantR variantD
   liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
   t1R <- runRandRecord $ execUC
@@ -947,20 +954,19 @@ makeSyncLog handler req = do
   return syncLog
   
 {-- TODO: Simulator for ACast --}
-simACastBroken :: MonadAdversaryToken m => (MonadProtocol m => Protocol ((ClockP2F (ACastP2F String)), CarryTokens Int)
-                                                                        (ACastF2P String)
-                                                                        --(SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
-                                                                        (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
-                                                                        (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)) m) ->
-                                           Adversary ((SttCruptZ2A (ClockP2F (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)))
-                                                     (Either (ClockA2F)
-                                                             (SID, (MulticastA2F (ACastMsg String), TransferTokens Int)))), CarryTokens Int)
-                                               --(SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), TransferTokens Int))
-                                               (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
-                                                     (Either (ClockF2A  (SID,((ACastMsg String, TransferTokens Int), CarryTokens Int)))
-                                                             (SID, (MulticastF2A (ACastMsg String), TransferTokens Int))))
-                                               (ACastF2P String) (ClockP2F (ACastP2F String, CarryTokens Int))
-                                               (Either (ClockF2A (String, CarryTokens Int)) Void) (Either ClockA2F Void) m
+simACastBroken :: MonadAdversaryToken m => 
+	(MonadProtocol m => Protocol ((ClockP2F (ACastP2F String)), CarryTokens Int)
+		(ACastF2P String) (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
+		(SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)) m) ->
+                                           
+	Adversary 
+		((SttCruptZ2A (ClockP2F (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)))
+									(Either (ClockA2F) (SID, (MulticastA2F (ACastMsg String), TransferTokens Int)))), CarryTokens Int)
+    (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
+                 (Either (ClockF2A  (SID,((ACastMsg String, TransferTokens Int), CarryTokens Int)))
+                         (SID, (MulticastF2A (ACastMsg String), TransferTokens Int))))
+    (ACastF2P String) (ClockP2F (ACastP2F String, CarryTokens Int))
+    (Either (ClockF2A (String, CarryTokens Int)) Void) (Either ClockA2F Void) m
 simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
     -- Sender and set of parties is encoded in SID
   let (pidS :: PID, parties :: [PID], t :: Int, sssid :: String) = readNote "protACast" $ snd ?sid
