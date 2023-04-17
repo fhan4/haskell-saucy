@@ -15,3 +15,8 @@ requires parties to handle all manner of messages out of order
 --> forces UC spec to be closer to reality
 
 CHECK: would ACast handle this?
+
+--------------------------------------
+
+the coin and token has a carrytokens returning on f2p
+fMulticastToken also has CarryTokens on F2P

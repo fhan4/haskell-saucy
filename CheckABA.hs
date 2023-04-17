@@ -32,15 +32,14 @@ type ABAInput = (ABACmd, Tokens)
 type ABAConfig = (SID, [PID], CruptList, Int)
 
 performABAEnv 
-  :: (MonadEnvironment m) => 
-  ABAConfig -> [Either ABAInput AsyncInput] ->
-  (Environment ABAF2P ((ClockP2F Bool), CarryTokens Int)
-     --(SttCruptA2Z (SID, (MulticastF2P BenOrMsg, TransferTokens Int)) 
-     (SttCruptA2Z (SID, (CoinCastF2P ABACast, CarryTokens Int)) 
-                  (Either (ClockF2A (SID, ((ABACast, TransferTokens Int), CarryTokens Int)))
-                          (SID, CoinCastF2A)))
-     ((SttCruptZ2A (ClockP2F (SID, ((CoinCastP2F ABACast, CarryTokens Int)))) 
-                  (Either ClockA2F (SID, (CoinCastA2F ABACast, CarryTokens Int)))), CarryTokens Int) Void
-     (ClockZ2F) ABATranscript m)
+    :: (MonadEnvironment m) =>
+    Environment (ABAF2P, CarryTokens Int) (ClockP2F Bool, CarryTokens Int)
+        (SttCruptA2Z (SID, ((CoinCastF2P ABACast), CarryTokens Int))
+                     (Either (ClockF2A (SID, ((ABACast, TransferTokens Int), CarryTokens Int)))
+                             (SID, CoinCastF2A)))
+        ((SttCruptZ2A (ClockP2F (SID, (CoinCastP2F ABACast, CarryTokens Int)))
+                      --(Either ClockA2F (SID, (CoinCastA2F ABACast, CarryTokens Int)))), CarryTokens Int) Void
+                      (Either ClockA2F (SID, (CoinCastA2F ABACast, TransferTokens Int)))), CarryTokens Int) Void
+        (ClockZ2F) ABATranscript m
 performABAEnv abaConfig cmdList z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   return ()

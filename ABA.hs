@@ -64,9 +64,11 @@ data CoinCastA2F a = CoinCastA2F_Deliver PID (a, TransferTokens Int) | CoinCastA
 data CoinCastF2A = CoinCastF2A_ro Bool deriving (Show, Eq)
 
 -- TODO: currently adv sends for free, we should change that
+{- We have   (CoinCastA2F t, TranferTokens Int) becuase runTokenA requires it -}
 fMulticastAndCoinToken :: MonadFunctionalityAsync m ((t, TransferTokens Int), CarryTokens Int) =>
     Functionality (CoinCastP2F t, CarryTokens Int) (CoinCastF2P t, CarryTokens Int)
-                  (CoinCastA2F t, CarryTokens Int) CoinCastF2A Void Void m 
+                  (CoinCastA2F t, TransferTokens Int) CoinCastF2A Void Void m 
+                  --(CoinCastA2F t, CarryTokens Int) CoinCastF2A Void Void m 
 fMulticastAndCoinToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   let sid = ?sid :: SID
   let (pidS :: PID, parties :: [PID], sssid :: String) = readNote "fMulticastAndCoinToken" $ snd sid
@@ -121,7 +123,8 @@ fMulticastAndCoinToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   else do
     delivered <- newIORef (empty :: Map PID ())
     fork $ forever $ do
-      (x, SendTokens tk) <- readChan a2f 
+      --(x, SendTokens tk) <- readChan a2f 
+      (x, DeliverTokensWithMessage tk) <- readChan a2f 
       require (tk>=0) "negative tokens sent"
       modifyIORef tokens $ (+) tk
       case x of
@@ -606,7 +609,8 @@ testEnvABAHonestAllTrue
                      (Either (ClockF2A (SID, ((ABACast, TransferTokens Int), CarryTokens Int)))
                              (SID, CoinCastF2A)))
         ((SttCruptZ2A (ClockP2F (SID, (CoinCastP2F ABACast, CarryTokens Int)))
-                      (Either ClockA2F (SID, (CoinCastA2F ABACast, CarryTokens Int)))), CarryTokens Int) Void
+                      --(Either ClockA2F (SID, (CoinCastA2F ABACast, CarryTokens Int)))), CarryTokens Int) Void
+                      (Either ClockA2F (SID, (CoinCastA2F ABACast, TransferTokens Int)))), CarryTokens Int) Void
         (ClockZ2F) ABATranscript m
 testEnvABAHonestAllTrue z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
     let sid = ("sidTestEnvMulticastCoin", show (["Alice", "Bob", "Charlie", "Mary"], 1, ""))
@@ -720,10 +724,12 @@ testEnvABAOneCruptOneRound z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
     () <- readChan pump
     let bobSID :: SID = (show ("sbcast", "Bob", 1, False), show ("Bob", parties, ""))
     --writeChan z2a $ SttCruptZ2A_A2F $ Right $ (bobSID, CastA2F_Deliver "Alice" $ EST 1 False)
-    writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Alice" $ (EST 1 False, DeliverTokensWithMessage 0)), SendTokens 0)))), SendTokens 0)
+    --writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Alice" $ (EST 1 False, DeliverTokensWithMessage 0)), SendTokens 0)))), SendTokens 0)
+    writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Alice" $ (EST 1 False, DeliverTokensWithMessage 0)), DeliverTokensWithMessage 0)))), SendTokens 0)
     
     () <- readChan pump
-    writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Charlie" $ (EST 1 True, DeliverTokensWithMessage 0)), SendTokens 0)))), SendTokens 0)
+    --writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Charlie" $ (EST 1 True, DeliverTokensWithMessage 0)), SendTokens 0)))), SendTokens 0)
+    writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Charlie" $ (EST 1 True, DeliverTokensWithMessage 0)), DeliverTokensWithMessage 0)))), SendTokens 0)
 
     -- Deliver all EST messages to corrupt Bob
     forMseq_ [0,2,4] $ \x -> do
@@ -732,7 +738,8 @@ testEnvABAOneCruptOneRound z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
 
     -- Send Bob's EST to Mary
     () <- readChan pump
-    writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Mary" $ (EST 1 False, DeliverTokensWithMessage 0)), SendTokens 0)))), SendTokens 0)
+    --writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Mary" $ (EST 1 False, DeliverTokensWithMessage 0)), SendTokens 0)))), SendTokens 0)
+    writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Mary" $ (EST 1 False, DeliverTokensWithMessage 0)), DeliverTokensWithMessage 0)))), SendTokens 0)
 
     -- Deliverall EST messages to Charlie
     forMseq_ [0,1,2] $ \x -> do
@@ -886,12 +893,14 @@ data ABAF2A = ABAF2A_Ok deriving Show
 -- fABA should leak the inputs of each of the parties, the simulator needs to guarantee BBC-validity where if every party proposes the same value, they all agree on that value 
 fABA :: MonadFunctionalityAsync m (PID, (Bool, CarryTokens Int)) =>
     Functionality (Bool, CarryTokens Int) (ABAF2P, CarryTokens Int) (ABAA2F, CarryTokens Int) ABAF2A Void Void m 
+    --Functionality (Bool, CarryTokens Int) ABAF2P (ABAA2F, CarryTokens Int) ABAF2A Void Void m 
 fABA (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
     let sid = ?sid :: SID
     let (parties :: [PID], t :: Int, sssid :: String) = readNote "fABA" $ snd sid
 
     inputs <- newIORef (empty :: Map PID Bool)
     decision <- newIORef False
+    tokens <- newIORef 0 
 
     let countInputs = do
                     numTrue <- readIORef inputs >>= return . sum . map (\x -> if x then 1 else 0) . Map.elems
@@ -902,11 +911,12 @@ fABA (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
 
     -- party inputs and schedule decision when inputs from honest parties
     fork $ forever $ do
-        (pid, (m :: Bool, tk)) <- readChan p2f
+        (pid, (m :: Bool, SendTokens tk)) <- readChan p2f
+        modifyIORef tokens $ (+) 1
         exists <- readIORef inputs >>= return . (member pid)
         if not exists then do
             modifyIORef inputs $ Map.insert pid m
-            ?leak (pid, (m, tk))
+            ?leak (pid, (m, SendTokens tk))
             
             ready <- readIORef inputs >>= return . ((length parties) ==) . length . Map.keys
             if ready then do
@@ -915,7 +925,10 @@ fABA (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
                        writeIORef decision $ if u then b else if (nt > t) then True else False
 
                 forMseq_ parties $ \pidX -> do
-                    eventually $ (readIORef decision >>= \d -> writeChan f2p (pidX, (ABAF2P_Out d, SendTokens 0)))
+                    eventually $ do
+                      tk <- readIORef tokens
+                      writeIORef tokens (tk-1)
+                      (readIORef decision >>= \d -> writeChan f2p (pidX, (ABAF2P_Out d, SendTokens 0)))
                 return ()
             else return ()
             writeChan f2p (pid, (ABAF2P_Ok, SendTokens 0))
@@ -924,7 +937,8 @@ fABA (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
     
     -- adversary can set crupt inputs and decide bit
     fork $ forever $ do
-        (m, tk) <- readChan a2f
+        (m, SendTokens tk) <- readChan a2f
+        modifyIORef tokens $ (+) tk
         case m of 
             -- adv can override any crupt party's input
             ABAA2F_Input p b -> do
@@ -980,19 +994,19 @@ fABA (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
 --testfABAHonest= runITMinIO 120 $ execUC testEnvfABAHonest idealProtocolToken  (runAsyncF $ fABA) dummyAdversaryToken
 
 
---makeSyncLog handler req = do
---  ctr <- newIORef 0
---  let syncLog = do
---        -- Post the request
---        log <- req
---        -- Only process the new elements
---        t <- readIORef ctr
---        let tail = drop t log
---        modifyIORef ctr (+ length tail)
---        forM tail handler
---        return ()
---  return syncLog
---
+makeSyncLog handler req = do
+  ctr <- newIORef 0
+  let syncLog = do
+        -- Post the request
+        log <- req
+        -- Only process the new elements
+        t <- readIORef ctr
+        let tail = drop t log
+        modifyIORef ctr (+ length tail)
+        forM tail handler
+        return ()
+  return syncLog
+
 --simABA :: MonadAdversary m => Adversary (SttCruptZ2A (ClockP2F (SID, CastP2F ABACast))
 --                                            (Either ClockA2F (SID, CastA2F ABACast)))
 --                                        (SttCruptA2Z (SID, CastF2P ABACast)
@@ -1000,211 +1014,239 @@ fABA (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
 --                                                    (SID , CastF2A ABACast)))
 --                                        ABAF2P (ClockP2F Bool)
 --                                        (Either (ClockF2A (PID, Bool)) ABAF2A) (Either ClockA2F ABAA2F) m
---simABA (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
---    let sid :: SID = ?sid
---    let (parties :: [PID], t :: Int, sssid :: String) = readNote "ABA" $ snd sid
---
---    numTrue <- newIORef 0
---    numFalse <- newIORef 0
---    partiesToDeliver <- newIORef parties
---
---    -- routing z2a <-->
---    sbxpump <- newChan
---    sbxz2p <- newChan
---    sbxp2z <- newChan
---
---    let sbxEnv z2exec (p2z', z2p') (a2z', z2a') _ pump' outp' = do
---        writeChan z2exec $ SttCrupt_SidCrupt ?sid ?crupt
---
---        forward p2z' sbxp2z
---        forward sbxz2p z2p'
---
---        forward z2a z2a'
---        forward a2z' a2z
---
---        forward pump' sbxpump
---    
---        return ()
---
---    let sbxBullRand () = bangFAsync fMulticastAndCoin
---   
---    -- monitor the sandbox for outputs  
---    chanOk <- newChan
---    
---    fork $ forever $ do
---        mf <- readChan sbxp2z
---        case mf of
---            (_pidS, ABAF2P_Ok) -> writeChan chanOk ()
---            (_pidS, ABAF2P_Out b) -> do
---                -- simulator just tries to force the bit: give all crupt
---                -- parties b as input and try to force the decision
---                forMseq_ (Map.keys ?crupt) $ \pidC -> do
---                    writeChan a2p (pidC, ClockP2F_Through b)
---                    readChan p2a  --OK messsage
---
---                -- also try to set the bit in fABA just in case
---                writeChan a2f (Right (ABAA2F_Decide b))
---                readChan f2a --OK
---    
---                -- Deliver this pid's output in fABA
---                idx <- readIORef partiesToDeliver >>= return . (findIndex (== _pidS))
---                case idx of
---                    Just x -> do 
---                        modifyIORef partiesToDeliver (deleteNth x)
---                        writeChan a2f (Left (ClockA2F_Deliver x))
---                    _ -> error "pid that doens't exist"
---    
---    let handleLeak m = do
---        printAdv $ "handleLeak simulator"
---        let (pid, b) = m
---        case b of
---            True -> modifyIORef numTrue (+ 1)
---            False -> modifyIORef numFalse (+ 1)
---        writeChan sbxz2p (pid, ClockP2F_Through b)
---        () <- readChan chanOk
---        --() <- readChan sbxpump
---        return ()
---
---    syncLeaks <- makeSyncLog handleLeak $ do
---        writeChan a2f $ Left ClockA2F_GetLeaks
---        mf <- readChan f2a
---        let Left (ClockF2A_Leaks leaks) = mf
---        return leaks
---
---    let sbxProt () = protABA
---
---    let sbxAdv (z2a',a2z') (p2a',a2p') (f2a',a2f') = do
---        fork $ forever $ do
---            mf <- readChan z2a'
---            printAdv $ show "Intercepted z2a'" ++ show mf
---            syncLeaks
---            printAdv $ "forwarding into the sandbox"
---            case mf of
---                SttCruptZ2A_A2F f -> writeChan a2f' f
---                SttCruptZ2A_A2P pm -> writeChan a2p' pm
---        fork $ forever $ do
---            m <- readChan f2a'
---            liftIO $ putStrLn $ show "f2a'" ++ show m
---            writeChan a2z' $ SttCruptA2Z_F2A m
---        fork $ forever $ do
---            (pid,m) <- readChan p2a'
---            liftIO $ putStrLn $ "p2a'"
---            writeChan a2z' $ SttCruptA2Z_P2A (pid, m)
---        return ()
---
---    mf <- selectRead z2a f2a
---
---    fork $ execUC_ sbxEnv (runAsyncP $ sbxProt ()) (runAsyncF (sbxBullRand ())) sbxAdv
---    () <- readChan sbxpump
---
---    case mf of
---        Left m -> writeChan z2a m
---        Right m -> writeChan f2a m
---
---    fork $ forever $ do
---        () <- readChan sbxpump
---        undefined
---        return ()
---
---    return ()
---
---testEnvSimHonest z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
---    let sid = ("sidTestEnvMulticastCoin", show (["Alice", "Bob", "Charlie", "Mary"], 1, ""))
---    writeChan z2exec $ SttCrupt_SidCrupt sid empty 
---
---    transcript <- newIORef []
---    
---    fork $ forever $ do
---        --(pid, (s, m)) <- readChan p2z
---        (pid, m) <- readChan p2z
---        modifyIORef transcript (++ [Right (pid, m)])
---        case m of
---            ABAF2P_Out b -> liftIO $ putStrLn $ "\ESC[33mParty [" ++ show pid ++ "] decided " ++ show b ++ "\ESC[0m"
---            _ -> printEnvReal "OK"
---        ?pass
---
---    fork $ forever $ do 
---        m <- readChan a2z
---        modifyIORef transcript (++ [Left m])
---        liftIO $ putStrLn $ "Z: a sent " ++ show m 
---        ?pass
---
---   --let sid1 :: SID = ("sidX", show ("Alice", ["Alice", "Bob", "Charlie", "Mary"], ""))
---    () <- readChan pump
---    writeChan z2p ("Alice", ClockP2F_Through True)
---    
---    () <- readChan pump
---    writeChan z2p ("Bob", ClockP2F_Through True)
---
---    () <- readChan pump
---    writeChan z2p ("Charlie", ClockP2F_Through True)
---
---    () <- readChan pump
---    writeChan z2p ("Mary", ClockP2F_Through True)
---   
---    -- Deliver all EST messages to Alice
---    forMseq_ [0,3,6,9] $ \x -> do
---        () <- readChan pump
---        writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver x)
---    
---    -- Deliver all EST messages to Bob
---    forMseq_ [0,2,4,6] $ \x -> do
---        () <- readChan pump
---        writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver x)
---
---    -- Deliver all EST messages to Charlie
---    forMseq_ [0,1,2,3] $ \x -> do
---        () <- readChan pump
---        writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver x)
---    
---    -- Deliver all EST messages to Mary
---    forMseq_ [0,0,0,0] $ \x -> do
---        () <- readChan pump
---        writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver x)
---
---    -- Deliver all AUX messages to Alice 
---    forMseq_ [0,3,6,9] $ \x -> do
---        () <- readChan pump
---        writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver x)
---    
---    -- Deliver all AUX messages to Bob
---    forMseq_ [0,2,4,6] $ \x -> do
---        () <- readChan pump
---        writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver x)
---
---    -- Deliver all AUX messages to Charlie
---    forMseq_ [0,1,2,3] $ \x -> do
---        () <- readChan pump
---        writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver x)
---    
---    -- Deliver all AUX messages to Mary
---    forMseq_ [0,0,0,0] $ \x -> do
---        () <- readChan pump
---        writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver x)
---
---    () <- readChan pump
---    writeChan outp =<< readIORef transcript
--- 
---testSimHonest = runITMinIO 120 $ execUC testEnvSimHonest idealProtocol (runAsyncF $ fABA) simABA
---
---testCompare :: IO Bool
---testCompare = runITMinIO 120 $ do
---    liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
---    t1 <- execUC
---            testEnvSimHonest
---            (runAsyncP protABA)
---            (runAsyncF $ bangFAsync fMulticastAndCoin)
---            dummyAdversary
---    liftIO $ putStrLn ""
---    liftIO $ putStrLn ""
---    liftIO $ putStrLn "*** RUNNING IDEAL WORLD ***"
---    t2 <- execUC
---            testEnvSimHonest
---            idealProtocol
---            (runAsyncF $ fABA)
---            simABA
---    return (t1 == t2)
---
+
+{- Known compiler complaints
+   * the compiler complains that we have 
+-} 
+simABA :: MonadAdversary m => Adversary 
+  ((SttCruptZ2A (ClockP2F (SID, (CoinCastP2F ABACast, CarryTokens Int)))
+                (Either ClockA2F (SID, (CoinCastA2F ABACast, TransferTokens Int)))), CarryTokens Int)
+  (SttCruptA2Z (SID, (CoinCastF2P ABACast, CarryTokens Int))
+               (Either (ClockF2A (SID, ((ABACast, TransferTokens Int), CarryTokens Int)))
+                       (SID, CoinCastF2A)))
+  (ABAF2P, CarryTokens Int) (ClockP2F (Bool, CarryTokens Int))
+  (Either (ClockF2A (PID, (Bool, CarryTokens Int))) ABAF2A) (Either ClockA2F (ABAA2F, CarryTokens Int)) m
+simABA (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
+    let sid :: SID = ?sid
+    let (parties :: [PID], t :: Int, sssid :: String) = readNote "ABA" $ snd sid
+
+    numTrue <- newIORef 0
+    numFalse <- newIORef 0
+    partiesToDeliver <- newIORef parties
+
+    -- routing z2a <-->
+    sbxpump <- newChan
+    sbxz2p <- newChan
+    sbxp2z <- newChan
+    sbxz2f <- newChan
+
+    let sbxEnv z2exec (p2z', z2p') (a2z', z2a') (f2z', z2f') pump' outp' = do
+        writeChan z2exec $ SttCrupt_SidCrupt ?sid ?crupt
+
+        forward p2z' sbxp2z
+        forward sbxz2p z2p'
+
+        forward z2a z2a'
+        forward a2z' a2z
+
+        forward sbxz2f z2f'
+
+        forward pump' sbxpump
+    
+        return ()
+
+    let sbxBullRand () = bangFAsync fMulticastAndCoinToken
+   
+    -- monitor the sandbox for outputs  
+    chanOk <- newChan
+    
+    fork $ forever $ do
+        mf <- readChan sbxp2z
+        case mf of
+            (_pidS, (ABAF2P_Ok, SendTokens tk')) -> writeChan chanOk ()
+            (_pidS, (ABAF2P_Out b, SendTokens tk')) -> do
+                -- simulator just tries to force the bit: give all crupt
+                -- parties b as input and try to force the decision
+                forMseq_ (Map.keys ?crupt) $ \pidC -> do
+                    writeChan a2p (pidC, ClockP2F_Through (b, SendTokens 0))
+                    readChan p2a  --OK messsage
+
+                -- also try to set the bit in fABA just in case
+                writeChan a2f (Right (ABAA2F_Decide b, SendTokens 0))
+                readChan f2a --OK
+    
+                -- Deliver this pid's output in fABA
+                idx <- readIORef partiesToDeliver >>= return . (findIndex (== _pidS))
+                case idx of
+                    Just x -> do 
+                        modifyIORef partiesToDeliver (deleteNth x)
+                        writeChan a2f (Left (ClockA2F_Deliver x))
+                    _ -> error "pid that doens't exist"
+        return ()
+    let handleLeak (pid, (b, SendTokens a)) = do
+        printAdv $ "handleLeak simulator"
+        --let (pid, b) = m
+        case b of
+            True -> modifyIORef numTrue (+ 1)
+            False -> modifyIORef numFalse (+ 1)
+        writeChan sbxz2p (pid, (ClockP2F_Through b, SendTokens a))
+        () <- readChan chanOk
+        --() <- readChan sbxpump
+        return ()
+
+    syncLeaks <- makeSyncLog handleLeak $ do
+        writeChan a2f $ Left ClockA2F_GetLeaks
+        mf <- readChan f2a
+        
+        let Left (ClockF2A_Leaks leaks) = mf
+        return leaks
+
+    let sbxProt () = protABA
+
+    let sbxAdv (z2a',a2z') (p2a',a2p') (f2a',a2f') = do
+        fork $ forever $ do
+            (mf, SendTokens _) <- readChan z2a'
+            printAdv $ show "Intercepted z2a'" ++ show mf
+            syncLeaks
+            printAdv $ "forwarding into the sandbox"
+            case mf of
+                SttCruptZ2A_A2F f -> writeChan a2f' f
+                SttCruptZ2A_A2P pm -> writeChan a2p' pm
+        fork $ forever $ do
+            m <- readChan f2a'
+            liftIO $ putStrLn $ show "f2a'" ++ show m
+            writeChan a2z' $ SttCruptA2Z_F2A m
+        fork $ forever $ do
+            (pid,m) <- readChan p2a'
+            liftIO $ putStrLn $ "p2a'"
+            writeChan a2z' $ SttCruptA2Z_P2A (pid, m)
+        return ()
+
+    mf <- selectRead z2a f2a
+
+    fork $ execUC_ sbxEnv (runAsyncP $ sbxProt ()) (runAsyncF (sbxBullRand ())) sbxAdv
+    () <- readChan sbxpump
+
+    case mf of
+        Left m -> writeChan z2a m
+        Right m -> writeChan f2a m
+
+    fork $ forever $ do
+        () <- readChan sbxpump
+        --undefined
+        return ()
+
+    return ()
+
+
+testEnvSimHonest 
+  :: (MonadEnvironment m) =>
+  Environment (ABAF2P, CarryTokens Int) (ClockP2F Bool, CarryTokens Int)
+    (SttCruptA2Z (SID, ((CoinCastF2P ABACast), CarryTokens Int))
+                 (Either (ClockF2A (SID, ((ABACast, TransferTokens Int), CarryTokens Int)))
+                         (SID, CoinCastF2A)))
+    ((SttCruptZ2A (ClockP2F (SID, (CoinCastP2F ABACast, CarryTokens Int)))
+                  --(Either ClockA2F (SID, (CoinCastA2F ABACast, CarryTokens Int)))), CarryTokens Int) Void
+                  (Either ClockA2F (SID, (CoinCastA2F ABACast, TransferTokens Int)))), CarryTokens Int) Void
+    (ClockZ2F) ABATranscript m
+testEnvSimHonest z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
+    let sid = ("sidTestEnvMulticastCoin", show (["Alice", "Bob", "Charlie", "Mary"], 1, ""))
+    writeChan z2exec $ SttCrupt_SidCrupt sid empty 
+
+    transcript <- newIORef []
+    
+    fork $ forever $ do
+        --(pid, (s, m)) <- readChan p2z
+        (pid, m) <- readChan p2z
+        modifyIORef transcript (++ [Right (pid, m)])
+        case m of
+            (ABAF2P_Out b, SendTokens x) -> liftIO $ putStrLn $ "\ESC[33mParty [" ++ show pid ++ "] decided " ++ show b ++ "\ESC[0m"
+            _ -> printEnvReal "OK"
+        ?pass
+
+    fork $ forever $ do 
+        m <- readChan a2z
+        modifyIORef transcript (++ [Left m])
+        liftIO $ putStrLn $ "Z: a sent " ++ show m 
+        ?pass
+
+   --let sid1 :: SID = ("sidX", show ("Alice", ["Alice", "Bob", "Charlie", "Mary"], ""))
+    () <- readChan pump
+    writeChan z2p ("Alice", (ClockP2F_Through True, SendTokens 100))
+    
+    () <- readChan pump
+    writeChan z2p ("Bob", (ClockP2F_Through True, SendTokens 100))
+
+    () <- readChan pump
+    writeChan z2p ("Charlie", (ClockP2F_Through True, SendTokens 100))
+
+    () <- readChan pump
+    writeChan z2p ("Mary", (ClockP2F_Through True, SendTokens 100))
+   
+    -- Deliver all EST messages to Alice
+    forMseq_ [0,3,6,9] $ \x -> do
+        () <- readChan pump
+        writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
+    
+    -- Deliver all EST messages to Bob
+    forMseq_ [0,2,4,6] $ \x -> do
+        () <- readChan pump
+        writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
+
+    -- Deliver all EST messages to Charlie
+    forMseq_ [0,1,2,3] $ \x -> do
+        () <- readChan pump
+        writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
+    
+    -- Deliver all EST messages to Mary
+    forMseq_ [0,0,0,0] $ \x -> do
+        () <- readChan pump
+        writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
+
+    -- Deliver all AUX messages to Alice 
+    forMseq_ [0,3,6,9] $ \x -> do
+        () <- readChan pump
+        writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
+    
+    -- Deliver all AUX messages to Bob
+    forMseq_ [0,2,4,6] $ \x -> do
+        () <- readChan pump
+        writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
+
+    -- Deliver all AUX messages to Charlie
+    forMseq_ [0,1,2,3] $ \x -> do
+        () <- readChan pump
+        writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
+    
+    -- Deliver all AUX messages to Mary
+    forMseq_ [0,0,0,0] $ \x -> do
+        () <- readChan pump
+        writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
+
+    () <- readChan pump
+    --writeChan outp =<< readIORef transcript
+    writeChan outp ""
+ 
+testSimHonest = runITMinIO 120 $ execUC testEnvSimHonest idealProtocolToken (runAsyncF $ fABA) (runTokenA $ simABA)
+
+testCompare :: IO Bool
+testCompare = runITMinIO 120 $ do
+    liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
+    t1 <- execUC
+            testEnvSimHonest
+            (runAsyncP protABA)
+            (runAsyncF $ bangFAsync $ fMulticastAndCoinToken)
+            dummyAdversaryToken
+    liftIO $ putStrLn ""
+    liftIO $ putStrLn ""
+    liftIO $ putStrLn "*** RUNNING IDEAL WORLD ***"
+    t2 <- execUC
+            testEnvSimHonest
+            idealProtocolToken
+            (runAsyncF $ fABA)
+            simABA
+    return (t1 == t2)
+
 ----prop_abaequivocation = monadicIO $ do
 ----    outputs <- newIORef (Set.empty :: Set Bool)
 ----
@@ -1293,103 +1335,103 @@ fABA (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
 ----                dummyAdversary
 ----
 ----    readIORef outputs >>= \x -> return ((Set.size x) ?== 1)
---
---
---testEnvSimCrupt z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
---    let parties = ["Alice", "Bob", "Charlie", "Mary"]
---    let sid = ("sidTestEnvMulticastCoin", show (parties, 1, ""))
---    writeChan z2exec $ SttCrupt_SidCrupt sid $ Map.fromList [("Bob",())]
---
---    transcript <- newIORef []
---    
---    fork $ forever $ do
---        --(pid, (s, m)) <- readChan p2z
---        (pid, m) <- readChan p2z
---        modifyIORef transcript (++ [Right (pid, m)])
---        case m of
---            ABAF2P_Out b -> liftIO $ putStrLn $ "\ESC[33mParty [" ++ show pid ++ "] decided " ++ show b ++ "\ESC[0m"
---            _ -> printEnvReal "OK"
---        ?pass
---
---    fork $ forever $ do 
---        m <- readChan a2z
---        modifyIORef transcript (++ [Left m])
---        liftIO $ putStrLn $ "Z: a sent " ++ show m 
---        ?pass
---
---    () <- readChan pump
---    writeChan z2p ("Alice", ClockP2F_Through True)
---    
---    --() <- readChan pump
---    --writeChan z2p ("Bob", ClockP2F_Through True)
---
---    () <- readChan pump
---    writeChan z2p ("Charlie", ClockP2F_Through True)
---
---    () <- readChan pump
---    writeChan z2p ("Mary", ClockP2F_Through True)
---   
---    -- Deliver all EST messages
---    forMseq_ [0,3,6] $ \x -> do
---        () <- readChan pump
---        writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver x)
---
---    -- Send Bob's EST to Alice and Charlie
---    () <- readChan pump
---    let bobSID :: SID = (show ("sbcast", "Bob", 1, False), show ("Bob", parties, ""))
---    writeChan z2a $ SttCruptZ2A_A2F $ Right $ (bobSID, CastA2F_Deliver "Alice" $ EST 1 False)
---    
---    () <- readChan pump
---    writeChan z2a $ SttCruptZ2A_A2F $ Right $ (bobSID, CastA2F_Deliver "Charlie" $ EST 1 True)
---
---    -- Deliver all EST messages to corrupt Bob
---    forMseq_ [0,2,4] $ \x -> do
---        () <- readChan pump
---        writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver x)
---
---    -- Send Bob's EST to Mary
---    () <- readChan pump
---    writeChan z2a $ SttCruptZ2A_A2F $ Right $ (bobSID, CastA2F_Deliver "Mary" $ EST 1 False)
---
---    -- Deliverall EST messages to Charlie
---    forMseq_ [0,1,2] $ \x -> do
---        () <- readChan pump
---        writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver x)
---
---    -- Deliverall EST messages to Mary
---    forMseq_ [0,0,0] $ \x -> do
---        () <- readChan pump
---        writeChan z2a $ SttCruptZ2A_A2F $ Left (ClockA2F_Deliver x)
---
---    -- We only stop at the honest partys' s_broadcast setting s_value[1/True] = True
---    -- this environment offers nothing more elucidating than checking handling of corrupt party.
---
---    () <- readChan pump
---    writeChan outp =<< readIORef transcript
---
---testCruptCompare :: IO Bool
---testCruptCompare = runITMinIO 120 $ do
---    liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
---    t1 <- execUC
---            testEnvSimCrupt
---            (runAsyncP protABA)
---            (runAsyncF $ bangFAsync fMulticastAndCoin)
---            dummyAdversary
---    liftIO $ putStrLn ""
---    liftIO $ putStrLn ""
---    liftIO $ putStrLn "*** RUNNING IDEAL WORLD ***"
---    t2 <- execUC
---            testEnvSimCrupt
---            idealProtocol
---            (runAsyncF $ fABA)
---            simABA
---
---    liftIO $ putStrLn "REAL WORLD"
---    liftIO $ putStrLn (show t1)
---    liftIO $ putStrLn ""
---    liftIO $ putStrLn ""
---    liftIO $ putStrLn "IDEAL WORLD"
---    liftIO $ putStrLn (show t2)
---
---
---    return (t1 == t2)
+
+
+testEnvSimCrupt z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
+    let parties = ["Alice", "Bob", "Charlie", "Mary"]
+    let sid = ("sidTestEnvMulticastCoin", show (parties, 1, ""))
+    writeChan z2exec $ SttCrupt_SidCrupt sid $ Map.fromList [("Bob",())]
+
+    transcript <- newIORef []
+    
+    fork $ forever $ do
+        --(pid, (s, m)) <- readChan p2z
+        (pid, (m, tK)) <- readChan p2z
+        modifyIORef transcript (++ [Right (pid, m)])
+        case m of
+            ABAF2P_Out b -> liftIO $ putStrLn $ "\ESC[33mParty [" ++ show pid ++ "] decided " ++ show b ++ "\ESC[0m"
+            _ -> printEnvReal "OK"
+        ?pass
+
+    fork $ forever $ do 
+        m <- readChan a2z
+        modifyIORef transcript (++ [Left m])
+        liftIO $ putStrLn $ "Z: a sent " ++ show m 
+        ?pass
+
+    () <- readChan pump
+    writeChan z2p ("Alice", (ClockP2F_Through True, SendTokens 100))
+    
+    --() <- readChan pump
+    --writeChan z2p ("Bob", ClockP2F_Through True)
+
+    () <- readChan pump
+    writeChan z2p ("Charlie", (ClockP2F_Through True, SendTokens 100))
+
+    () <- readChan pump
+    writeChan z2p ("Mary", (ClockP2F_Through True, SendTokens 100))
+   
+    -- Deliver all EST messages
+    forMseq_ [0,3,6] $ \x -> do
+        () <- readChan pump
+        writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
+
+    -- Send Bob's EST to Alice and Charlie
+    () <- readChan pump
+    let bobSID :: SID = (show ("sbcast", "Bob", 1, False), show ("Bob", parties, ""))
+    writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Alice" $ (EST 1 False, DeliverTokensWithMessage 0)), DeliverTokensWithMessage 0)))), SendTokens 0)
+    
+    () <- readChan pump
+    writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Charlie" $ (EST 1 True, DeliverTokensWithMessage 0)), DeliverTokensWithMessage 0)))), SendTokens 0)
+
+    -- Deliver all EST messages to corrupt Bob
+    forMseq_ [0,2,4] $ \x -> do
+        () <- readChan pump
+        writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
+
+    -- Send Bob's EST to Mary
+    () <- readChan pump
+    writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Mary" $ (EST 1 False, DeliverTokensWithMessage 0)), DeliverTokensWithMessage 0)))), SendTokens 0)
+
+    -- Deliverall EST messages to Charlie
+    forMseq_ [0,1,2] $ \x -> do
+        () <- readChan pump
+        writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
+
+    -- Deliverall EST messages to Mary
+    forMseq_ [0,0,0] $ \x -> do
+        () <- readChan pump
+        writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
+
+    -- We only stop at the honest partys' s_broadcast setting s_value[1/True] = True
+    -- this environment offers nothing more elucidating than checking handling of corrupt party.
+
+    () <- readChan pump
+    writeChan outp =<< readIORef transcript
+
+testCruptCompare :: IO Bool
+testCruptCompare = runITMinIO 120 $ do
+    liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
+    t1 <- execUC
+            testEnvSimCrupt
+            (runAsyncP protABA)
+            (runAsyncF $ bangFAsync fMulticastAndCoinToken)
+            dummyAdversaryToken
+    liftIO $ putStrLn ""
+    liftIO $ putStrLn ""
+    liftIO $ putStrLn "*** RUNNING IDEAL WORLD ***"
+    t2 <- execUC
+            testEnvSimCrupt
+            idealProtocolToken
+            (runAsyncF $ fABA)
+            simABA
+
+    liftIO $ putStrLn "REAL WORLD"
+    liftIO $ putStrLn (show t1)
+    liftIO $ putStrLn ""
+    liftIO $ putStrLn ""
+    liftIO $ putStrLn "IDEAL WORLD"
+    liftIO $ putStrLn (show t2)
+
+
+    return (t1 == t2)
