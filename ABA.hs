@@ -631,16 +631,16 @@ testEnvABAHonestAllTrue z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
 
    --let sid1 :: SID = ("sidX", show ("Alice", ["Alice", "Bob", "Charlie", "Mary"], ""))
     () <- readChan pump
-    writeChan z2p ("Alice", (ClockP2F_Through True, SendTokens 8))
+    writeChan z2p ("Alice", (ClockP2F_Through True, SendTokens 100))
     
     () <- readChan pump
-    writeChan z2p ("Bob", (ClockP2F_Through True, SendTokens 8))
+    writeChan z2p ("Bob", (ClockP2F_Through True, SendTokens 100))
 
     () <- readChan pump
-    writeChan z2p ("Charlie", (ClockP2F_Through True, SendTokens 8))
+    writeChan z2p ("Charlie", (ClockP2F_Through True, SendTokens 100))
 
     () <- readChan pump
-    writeChan z2p ("Mary", (ClockP2F_Through True, SendTokens 8))
+    writeChan z2p ("Mary", (ClockP2F_Through True, SendTokens 100))
    
     -- Deliver all EST messages to Alice
     forMseq_ [0,3,6,9] $ \x -> do
@@ -704,16 +704,16 @@ testEnvABAOneCruptOneRound z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
         ?pass
 
     () <- readChan pump
-    writeChan z2p ("Alice", (ClockP2F_Through True, SendTokens 12))
+    writeChan z2p ("Alice", (ClockP2F_Through True, SendTokens 100))
     
     --() <- readChan pump
     --writeChan z2p ("Bob", ClockP2F_Through True)
 
     () <- readChan pump
-    writeChan z2p ("Charlie", (ClockP2F_Through True, SendTokens 12))
+    writeChan z2p ("Charlie", (ClockP2F_Through True, SendTokens 100))
 
     () <- readChan pump
-    writeChan z2p ("Mary", (ClockP2F_Through True, SendTokens 12))
+    writeChan z2p ("Mary", (ClockP2F_Through True, SendTokens 100))
    
     -- Deliver all EST messages
     forMseq_ [0,3,6] $ \x -> do
@@ -780,16 +780,16 @@ testEnvABAHonestMultiRound z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
 
     -- tl;dr give half parties True as Input and the other half False and let them reach a consenus on the bit
     () <- readChan pump
-    writeChan z2p ("Alice", (ClockP2F_Through True, SendTokens 12))
+    writeChan z2p ("Alice", (ClockP2F_Through True, SendTokens 100))
     
     () <- readChan pump
-    writeChan z2p ("Bob", (ClockP2F_Through True, SendTokens 12))
+    writeChan z2p ("Bob", (ClockP2F_Through True, SendTokens 100))
 
     () <- readChan pump
-    writeChan z2p ("Charlie", (ClockP2F_Through False, SendTokens 12))
+    writeChan z2p ("Charlie", (ClockP2F_Through False, SendTokens 100))
 
     () <- readChan pump
-    writeChan z2p ("Mary", (ClockP2F_Through False, SendTokens 12))
+    writeChan z2p ("Mary", (ClockP2F_Through False, SendTokens 100))
     () <- readChan pump
 
     liftIO $ putStrLn $ "\n\ESC[31m Alice and Bob should rebroadcast False\ESC[0m\n"
@@ -952,6 +952,7 @@ fABA (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
 
 --- TODO: if there are n=5 parties. 3 of them propose 0 and 2 of the propose 1: is it still possible for them to decide on 0 given the right ordering of delivering the messages? It seems to me that it's a tossup only when there are equal numbers of people proposing 0 and 1. Then the delivery order matters.
 
+-- TODO: the environment doens't compile because the dummyAdversaryToken is written to work with !fMulticast rater than a generic functionality like fABA.
 --testEnvfABAHonest z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
 --    let parties = ["Alice", "Bob", "Charlie", "Mary"]
 --    let sid = ("sidfABA", show (parties, 1, ""))
@@ -979,16 +980,16 @@ fABA (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
 --    writeChan z2p ("Charlie", (ClockP2F_Through False, SendTokens 0))
 --    () <- readChan pump
 --    writeChan z2p ("Mary", (ClockP2F_Through False, SendTokens 0))
-
-    -- Adversary should be able to set the bit now
+--
+--  -- Adversary should be able to set the bit now
 --    () <- readChan pump
 --    writeChan z2a $ ((SttCruptZ2A_A2F (Right ((ABAA2F_Decide True, SendTokens 0)))), SendTokens 0)
 --
 --    forMseq_ [0..3] $ \_ -> do
 --        () <- readChan pump
 --        writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver 0))), SendTokens 0)
-     
-    --writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Charlie" $ (EST 1 True, DeliverTokensWithMessage 0)), SendTokens 0)))), SendTokens 0)
+--   
+--  --writeChan z2a $ ((SttCruptZ2A_A2F $ (Right $ (bobSID, ((CoinCastA2F_Deliver "Charlie" $ (EST 1 True, DeliverTokensWithMessage 0)), SendTokens 0)))), SendTokens 0)
 --
 --
 --testfABAHonest= runITMinIO 120 $ execUC testEnvfABAHonest idealProtocolToken  (runAsyncF $ fABA) dummyAdversaryToken
@@ -1246,7 +1247,6 @@ testCompare = runITMinIO 120 $ do
             (runAsyncF $ fABA)
             simABA
     return (t1 == t2)
-
 ----prop_abaequivocation = monadicIO $ do
 ----    outputs <- newIORef (Set.empty :: Set Bool)
 ----

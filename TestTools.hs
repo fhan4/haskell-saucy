@@ -42,7 +42,7 @@ selectPIDs pids = do
 --multicastSid :: (MonadIO m) => String -> PID -> [PID] -> String -> m SID
 multicastSid sssid snd ps s = (sssid, show (snd, ps, s))
 
-data AsyncCmd = CmdDeliver Int | CmdMakeProgress | CmdGetCount deriving Show
+data AsyncCmd = CmdDeliver Int | CmdMakeProgress | CmdGetCount deriving (Eq, Show, Ord)
 
 type AsyncInput = (AsyncCmd, Tokens)
 
@@ -202,28 +202,26 @@ envDeliverAll clockChan t forCmdList _ _ (a2z, z2a) (f2z, z2f) pump _ = do
   writeChan forCmdList c
      
 envExecAsyncCmd :: (MonadITM m) =>
-	(Chan (PID, ((ClockP2F _z2p), CarryTokens Int) )) ->
-	(Chan ((SttCruptZ2A (ClockP2F _p2f) (Either ClockA2F _a2f)), CarryTokens Int)) ->
-	(Chan ClockZ2F) -> Chan Int -> Chan () -> (Either _protInput AsyncInput) -> 
-	(Chan (PID, ((ClockP2F _z2p), CarryTokens Int)) -> 
-	 Chan ((SttCruptZ2A (ClockP2F _p2f) (Either ClockA2F _a2f)), CarryTokens Int) ->
-	 Chan () -> Either _protInput AsyncInput ->
-	(Either _protInput AsyncInput) -> m ()) ->
-	m ()
+  (Chan (PID, ((ClockP2F _z2p), CarryTokens Int) )) ->
+  (Chan ((SttCruptZ2A (ClockP2F _p2f) (Either ClockA2F _a2f)), CarryTokens Int)) ->
+  (Chan ClockZ2F) -> Chan Int -> Chan () -> (Either _protInput AsyncInput) -> 
+  (Chan (PID, ((ClockP2F _z2p), CarryTokens Int)) -> 
+   Chan ((SttCruptZ2A (ClockP2F _p2f) (Either ClockA2F _a2f)), CarryTokens Int) ->
+   Chan () -> (Either _protInput AsyncInput) -> m ()) -> m ()
 envExecAsyncCmd z2p z2a z2f clockChan pump cmd f = do
-	case cmd of
-		Right (CmdDeliver idx', st') -> do
-			writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens st')
-			readChan pump
-		Right (CmdGetCount, st') -> do
-			writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens st')
-			readChan clockChan
-			return ()
-		Right (CmdMakeProgress, _) -> do
-			writeChan z2f ClockZ2F_MakeProgress
-			readChan pump
-		_ -> f z2p z2a pump cmd
-	return ()
+  case cmd of
+    Right (CmdDeliver idx', st') -> do
+        writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens st')
+        readChan pump
+    Right (CmdGetCount, st') -> do     
+        writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens st')
+        readChan clockChan
+        return ()
+    Right (CmdMakeProgress, _) -> do
+        writeChan z2f ClockZ2F_MakeProgress
+        readChan pump
+    Left _ -> do f z2p z2a pump cmd
+  return ()
 
  
 ---- SID, Parties, Crupt, Custom tuple

@@ -20,3 +20,13 @@ CHECK: would ACast handle this?
 
 the coin and token has a carrytokens returning on f2p
 fMulticastToken also has CarryTokens on F2P
+
+BenOr thresholds
+N-t        One messages
+	if (N+t)/2    One --> TwoD message
+	ese 		  One --> Two message
+
+N-t		   TwoX messages
+	if t+1 		D-messages for v set x = v
+	if (N+t)/2	D-messages decide v
+	else xp = coin flip

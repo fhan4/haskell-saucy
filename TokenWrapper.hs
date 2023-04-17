@@ -34,6 +34,16 @@ getToken :: MonadAdversaryToken m => m Int
 getToken = ?getToken
 
 
+-- TODO: should p2z have tokens too for dummy parties that forward tokens???
+--type TokenEnvironment p2z z2p a2z z2a f2z z2f outz m = MonadEnvironment m => Chan SttCrupt_SidCrupt -> (Chan (PID, p2z), Chan ((PID, z2p), CarryTokens Int)) -> (Chan (a2z, CarryTokens Int), Chan (z2a, CarryTokens Int)) -> (Chan f2z, Chan z2f) -> Chan () -> Chan outz -> m ()
+type TokenEnvironment p2z z2p a2z z2a f2z z2f outz m = MonadEnvironment m => Chan SttCrupt_SidCrupt -> (Chan (PID, p2z), Chan (PID, (z2p, CarryTokens Int))) -> (Chan (a2z, CarryTokens Int), Chan (z2a, CarryTokens Int)) -> (Chan f2z, Chan z2f) -> Chan () -> Chan outz -> m ()
+
+--type TokenAsyncEnvironment p2z z2p a2z z2a f2z z2f outz m = TokenEnvironment p2z (ClockP2F z2p) 
+
+-- TODO adversary not charge ANYTHING?????
+--type TokenFunctionality p2f f2p a2f f2a z2f f2z m = MonadFunctionality m => (Chan ((PID, p2f), CarryTokens Int), Chan ((PID, f2p), CarryTokens Int)) -> (Chan a2f, Chan f2a) -> (Chan z2f, f2z) -> m ()
+type TokenFunctionality p2f f2p a2f f2a z2f f2z m = MonadFunctionality m => (Chan (PID, (p2f, CarryTokens Int)), Chan (PID, (f2p, CarryTokens Int))) -> (Chan a2f, Chan f2a) -> (Chan z2f, Chan f2z) -> m ()
+
 
 runTokenA :: MonadAdversary m =>
           (MonadAdversaryToken m => Adversary ((SttCruptZ2A z2a (Either (ClockA2F) (SID, (z2a2f, TransferTokens Int)))),
@@ -139,6 +149,10 @@ idealProtocolToken (z2p, p2z) (f2p, p2f) = do
     --liftIO $ putStrLn $ "idealProtocol received from f2p " ++ pid
     writeChan p2z m
   return ()
+
+
+--partyWrapperTokens :: MonatITM m => SID -> Crupt -> Chan () -> (Chan ((PID, z2p), CarryTokens Int), Chan (PID, p2z)) -> (Chan ((PID, f2p), CarryTokens Int), Chan ((PID, p2f), CarryTokens Int)) -> (Chan (PID, p2f)V
+
 
 --_bangFAsyncInstanceToken :: MonadFunctionalityAsync m => Chan ((SID, l), CarryTokens Int) -> Chan (Chan (), Chan ()) -> (forall m. MonadFunctionalityAsync m (l, CarryTokens Int) => Functionality p2f f2p a2f f2a Void Void m) ->  Functionality p2f f2p a2f f2a Void Void m
 --_bangFAsyncInstanceToken _leak _eventually f = f

@@ -60,7 +60,6 @@ data ClockZ2F = ClockZ2F_MakeProgress deriving Show
 data ClockP2F a = ClockP2F_Pass | ClockP2F_Through a deriving Show
 
 
-
 {-- Implementation of MonadAsync --}
 
 deleteNth i xs = l ++ r where (l,(_:r)) = splitAt i xs
@@ -138,13 +137,12 @@ runAsyncF f (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
   -- Allow the environment to force progress along
   fork $ forever $ do
     ClockZ2F_MakeProgress <- readChan z2f
-    liftIO $ putStrLn $ "[fAsync] MakeProgress"
     rq <- readIORef runqueue
     dl <- readIORef delay
-    liftIO $ putStrLn $ "[fAsync] current delay: " ++ show dl
+    --liftIO $ putStrLn $ "[fAsync] current delay: " ++ show dl
     if dl > 0 then do
       writeIORef delay (dl-1)
-      liftIO $ putStrLn $ "[fAsync] new delay: " ++ show (dl-1)
+      --liftIO $ putStrLn $ "[fAsync] new delay: " ++ show (dl-1)
       writeChan f2a $ Left ClockF2A_Advance
       -- ?pass
     else do
@@ -381,8 +379,31 @@ runAsyncP prot (z2p, p2z) (f2p, p2f) = do
   let pass = do
         writeChan p2f ClockP2F_Pass
   p2f' <- wrapWrite ClockP2F_Through p2f
+
   let ?pass = pass in
      prot (z2p, p2z) (f2p,p2f')
+
+--runAsyncPEventually :: MonadProtocol m =>
+--  (MonadAsyncP m => Protocol z2p p2z f2p p2f m) ->
+--     Protocol z2p p2z f2p (ClockP2F p2f) m
+--runAsyncPEventually prot (z2p, p2z) (f2p, p2f) = do
+--  let pass = do
+--        writeChan p2f ClockP2F_Pass
+--  p2f' <- wrapWrite ClockP2F_Through p2f
+--
+--	runqueue <- newIORef []
+--	delay <- newIORef 0
+--
+--	let _eventually m = do
+--				c :: Chan () <- newChan
+--				modifyIORef runqueue (++ [c])
+--				modifyIORef delay (+1)
+--				l <- (readIORef runqueue >>= return . length)
+--				fork $ readchan c >> m
+--				return ()
+--
+--  let ?pass = pass in
+--     prot (z2p, p2z) (f2p,p2f')
         
 
 type MonadTestableP m = (MonadProtocol m,
