@@ -30,3 +30,11 @@ N-t		   TwoX messages
 	if t+1 		D-messages for v set x = v
 	if (N+t)/2	D-messages decide v
 	else xp = coin flip
+
+-------------------------------------
+
+S_VAL messages for both bits per round
+	-- choose 0, 1 or both to S_VAL for each round
+EST messages for both bits per round
+	-- choose 0, 1 or both for EST for each round
+AUX is treated the same way

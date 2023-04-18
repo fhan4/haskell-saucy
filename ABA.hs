@@ -21,6 +21,7 @@ module ABA where
 import ProcessIO
 import StaticCorruptions
 import Async
+import Multicast (forMseq_)
 import Multisession
 import TokenWrapper
 
@@ -36,7 +37,7 @@ import qualified Data.Map.Strict as Map
 --import qualified Data.Set as Set
 
 
-forMseq_ xs f = sequence_ $ map f xs
+--forMseq_ xs f = sequence_ $ map f xs
 
 --data TokenMsg a = (a, CarryTokens Int) deriving (Show, Eq)
 --type TokenMsg a = (a, CarryTokens b) deriving (Show, Eq)
@@ -89,7 +90,8 @@ fMulticastAndCoinToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
                 readChan =<< newChan
             else return ()
   
-  if not $ member pidS ?crupt then
+  if not $ member pidS ?crupt then do
+    liftIO $ putStrLn $ "not crupt: " ++ show pidS
     fork $ forever $ do
       (pid, x) <- readChan p2f
       case x of
@@ -106,18 +108,21 @@ fMulticastAndCoinToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
                   --require (tk >= st) ("Not enough tokens. Need " ++ show st ++ ", have " ++ showf)
                   writeIORef tokens (max 0 (tk-1-st))
                   writeChan f2p (pidR, (CoinCastF2P_Deliver m, SendTokens (min st (tk-1))))
-                else ?pass
+                else return () -- ?pass
             writeChan f2p (pidS, (CoinCastF2P_OK, SendTokens 0))
           else ?pass 
         (CoinCastP2F_ro r, SendTokens a) -> do
-          require (a>0) "no free ro queries >:("
+          --require (a>=0) "no free ro queries >:("
+          liftIO $ putStrLn $ "ro request"
           modifyIORef tokens $ (+) (a-1)
           cf <- readIORef coinFlips
           if not $ member r cf then do
             b <- ?getBit
+            liftIO $ putStrLn $ "coin if not member"
             modifyIORef coinFlips $ Map.insert r b
             writeChan f2p (pid, (CoinCastF2P_ro b, SendTokens 0))
           else do
+            liftIO $ putStrLn $ "coin already cast"
             b <- readIORef coinFlips >>= return . (! r)
             writeChan f2p (pid, (CoinCastF2P_ro b, SendTokens 0))
   else do
@@ -130,7 +135,8 @@ fMulticastAndCoinToken (p2f, f2p) (a2f, f2a) (z2f, f2z) = do
       case x of
         CoinCastA2F_Deliver pidR (m, DeliverTokensWithMessage st) -> do
           del <- readIORef delivered
-          if member pidR del then return ()
+          --if member pidR del then return ()
+          if member pidR del then ?pass
           else do
             tks <- readIORef tokens
             if  (tks >= st) then do 
@@ -482,6 +488,7 @@ protABA (z2p, p2z) (f2p, p2f) = do
    
     -- Get a common coin from the random oracle 
     let commonCoinR r = do
+        liftIO $ putStrLn $ "Making a god damn COIN FLIP"
         tk <- readIORef tokens
         if (tk >= 1) then do
           modifyIORef tokens $ (-) 1
@@ -512,6 +519,11 @@ protABA (z2p, p2z) (f2p, p2f) = do
 
     -- on input propose(v) from Z:
     (msg, SendTokens tks) <- readChan z2p
+
+    fork $ forever $ do
+      readChan z2p  
+      ?pass
+
     modifyIORef tokens $ (+) tks
     case msg of
             ClockP2F_Pass -> error "shouldn't be passing anything"
@@ -595,12 +607,19 @@ protABA (z2p, p2z) (f2p, p2f) = do
                             return ()
                           Nothing -> return ()
                     else do
-                        m <- readChan z2p
+                        ?pass
                         return ()
      
     return () 
 
-type ABATranscript = String
+type ABATranscript = [Either
+                        (SttCruptA2Z
+                          (SID, (CoinCastF2P ABACast, CarryTokens Int))
+                          (Either 
+                            (ClockF2A (SID, ((ABACast, TransferTokens Int), CarryTokens Int)))
+                            (SID, CoinCastF2A)))
+                        (PID, (ABAF2P, CarryTokens Int))]
+
 
 testEnvABAHonestAllTrue 
     :: (MonadEnvironment m) =>
@@ -616,9 +635,12 @@ testEnvABAHonestAllTrue z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
     let sid = ("sidTestEnvMulticastCoin", show (["Alice", "Bob", "Charlie", "Mary"], 1, ""))
     writeChan z2exec $ SttCrupt_SidCrupt sid empty 
 
+    transcript <- newIORef []
+
     fork $ forever $ do
         --(pid, (s, m)) <- readChan p2z
         (pid, m) <- readChan p2z
+        modifyIORef transcript $ (++ [Right (pid,m)])
         case m of
             (ABAF2P_Out b, SendTokens tk) -> liftIO $ putStrLn $ "\ESC[31mParty [" ++ show pid ++ "] decided " ++ show b ++ "\ESC[0m"
             _ -> liftIO $ putStrLn $ "Party [" ++ show pid ++ "] output " ++ show m
@@ -626,6 +648,7 @@ testEnvABAHonestAllTrue z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
 
     fork $ forever $ do 
         m <- readChan a2z
+        modifyIORef transcript $ (++ [Left m])
         liftIO $ putStrLn $ "Z: a sent " ++ show m 
         ?pass
 
@@ -683,7 +706,8 @@ testEnvABAHonestAllTrue z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
         writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
     
     () <- readChan pump
-    writeChan outp []
+    tr <- readIORef transcript
+    writeChan outp tr
 
 testABAHonestAllTrue = runITMinIO 120 $ execUC testEnvABAHonestAllTrue (runAsyncP protABA) (runAsyncF $ bangFAsync $ fMulticastAndCoinToken) dummyAdversaryToken
 
@@ -692,14 +716,17 @@ testEnvABAOneCruptOneRound z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
     let sid = ("sidTestEnvMulticastCoin", show (parties, 1, ""))
     writeChan z2exec $ SttCrupt_SidCrupt sid $ Map.fromList [("Bob",())]
 
+    transcript <- newIORef []
     fork $ forever $ do
         --(pid, (s, m)) <- readChan p2z
         (pid, m) <- readChan p2z
+        modifyIORef transcript $ (++ [Right (pid,m)])
         liftIO $ putStrLn $ "Z: party[" ++ pid ++ "] output " ++ show m
         ?pass
 
     fork $ forever $ do 
         m <- readChan a2z
+        modifyIORef transcript $ (++ [Left m])
         liftIO $ putStrLn $ "Z: a sent " ++ show m 
         ?pass
 
@@ -755,7 +782,8 @@ testEnvABAOneCruptOneRound z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
     -- this environment offers nothing more elucidating than checking handling of corrupt party.
 
     () <- readChan pump
-    writeChan outp []
+    tr <- readIORef transcript
+    writeChan outp tr
 
 testABAOneCruptOneRound = runITMinIO 120 $ execUC testEnvABAOneCruptOneRound (runAsyncP protABA) (runAsyncF $ bangFAsync $ fMulticastAndCoinToken) dummyAdversaryToken
 
@@ -765,14 +793,17 @@ testEnvABAHonestMultiRound z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
     let sid = ("sidTestEnvMulticastCoin", show (parties, 1, ""))
     writeChan z2exec $ SttCrupt_SidCrupt sid empty
 
+    transcript <- newIORef []
     fork $ forever $ do
         --(pid, (s, m)) <- readChan p2z
         (pid, m) <- readChan p2z
+        modifyIORef transcript $ (++ [Right (pid,m)])
         liftIO $ putStrLn $ "\ESC[33m Z: party[" ++ pid ++ "] output " ++ show m ++ "\ESC[0m"
         ?pass
 
     fork $ forever $ do 
         m <- readChan a2z
+        modifyIORef transcript $ (++ [Left m])
         case m of
             SttCruptA2Z_F2A (Left ClockF2A_Pass) -> return ()
             _ -> liftIO $ putStrLn $ "Z: a sent " ++ show m 
@@ -830,7 +861,8 @@ testEnvABAHonestMultiRound z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
         return ()
 
     --() <- readChan pump
-    writeChan outp []
+    tr <- readIORef transcript
+    writeChan outp tr
 testABAHonestMultiRound = runITMinIO 120 $ execUC testEnvABAHonestMultiRound (runAsyncP protABA) (runAsyncF $ bangFAsync $ fMulticastAndCoinToken) dummyAdversaryToken
  
 testEnvABAMinority z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
@@ -838,14 +870,17 @@ testEnvABAMinority z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
     let sid = ("sidTestEnvMulticastCoin", show (parties, 1, ""))
     writeChan z2exec $ SttCrupt_SidCrupt sid empty
 
+    transcript <- newIORef []
     fork $ forever $ do
         --(pid, (s, m)) <- readChan p2z
         (pid, m) <- readChan p2z
+        modifyIORef transcript $ (++ [Right (pid,m)])
         liftIO $ putStrLn $ "\ESC[33m Z: party[" ++ pid ++ "] output " ++ show m ++ "\ESC[0m"
         ?pass
 
     fork $ forever $ do 
         m <- readChan a2z
+        modifyIORef transcript $ (++ [Left m])
         case m of
             SttCruptA2Z_F2A (Left ClockF2A_Pass) -> return ()
             _ -> liftIO $ putStrLn $ "Z: a sent " ++ show m 
@@ -883,6 +918,8 @@ testEnvABAMinority z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
         writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver 35))), SendTokens 0)
 
     -- TODO: finish but i'm convinced that you can decide on the minority proposal
+    tr <- readIORef transcript
+    writeChan outp tr
 
 testABAMinority = runITMinIO 120 $ execUC testEnvABAMinority (runAsyncP protABA) (runAsyncF $ bangFAsync $ fMulticastAndCoinToken) dummyAdversaryToken
  
@@ -1134,7 +1171,6 @@ simABA (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
 
     fork $ forever $ do
         () <- readChan sbxpump
-        --undefined
         return ()
 
     return ()
@@ -1225,8 +1261,7 @@ testEnvSimHonest z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
         writeChan z2a $ ((SttCruptZ2A_A2F $ (Left (ClockA2F_Deliver x))), SendTokens 0)
 
     () <- readChan pump
-    --writeChan outp =<< readIORef transcript
-    writeChan outp ""
+    writeChan outp =<< readIORef transcript
  
 testSimHonest = runITMinIO 120 $ execUC testEnvSimHonest idealProtocolToken (runAsyncF $ fABA) (runTokenA $ simABA)
 
