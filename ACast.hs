@@ -1082,7 +1082,7 @@ simACastBroken sbxProt (z2a, a2z) (p2a, a2p) (f2a, a2f) = do
   syncLeaks <- makeSyncLog handleLeak $ do
         writeChan a2f $ Left ClockA2F_GetLeaks
         mf <- readChan f2aLeak
-        let Left (ClockF2A_Leaks leaks) = mf
+        let Left (ClockF2A_Leaks (leaks :: [(String, CarryTokens Int)])) = mf
         return leaks
 
   let sbxAdv (z2a',a2z') (p2a',a2p') (f2a',a2f') = do
