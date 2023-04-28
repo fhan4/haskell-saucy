@@ -497,24 +497,24 @@ propEnvBrachaSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   --writeChan outp =<< readIORef transcript
   writeChan outp ((sid, parties, crupt, t, leader), reverse cl, tr)
 
+{- 		
+		[ PROPERTY ]
+-}
 prop_brachaSafety = monadicIO $ do
     let variantT = ACastTSmall
     let variantR = ACastRSmall
     let variantD = ACastDSmall
     let prot () = protACastBroken variantT variantR variantD 
-    --(config', c', t') <- run $ runITMinIO 120 $ execUC propEnvBrachaSafety (runAsyncP protACast) (runAsyncF $ bangFAsync fMulticast) dummyAdversary
     (config', c', t') <- run $ runITMinIO 120 $ execUC 
       propEnvBrachaSafety 
       idealProtocolToken 
       (runAsyncF fACastToken) 
       (runTokenA $ simACastBroken $ prot ())
-    --t <- run $ runITMinIO 120 $ execUC (performACastEnv config' c') (runAsyncP protACast) (runAsyncF $ bangFAsync fMulticast) dummyAdversary
     t <- run $ runITMinIO 120 $ execUC 
       (performACastEnv config' c') 
       (runAsyncP $ prot ()) 
       (runAsyncF $ bangFAsync fMulticastToken) 
       dummyAdversaryToken
-    --assert (t == [])
     let x :: String = show t
     -- require that all deliverances are the same
     outputs <- newIORef Set.empty
@@ -529,7 +529,46 @@ prop_brachaSafety = monadicIO $ do
     printYellow ("[Inputs]\n\n" ++ show c')
     assert ( (Set.size o) <= 1 )
     assert (t == t')
-       
+
+{- 		
+		[ PROPERTY ]
+-}
+prop_compareSafetyStructure = monadicIO $ do 
+    let variantT = ACastTSmall
+    let variantR = ACastRSmall
+    let variantD = ACastDSmall
+    let prot () = protACastBroken variantT variantR variantD 
+    (configU', cU', tU') <- run $ runITMinIO 120 $ execUC 
+      propUEnvBrachaSafety 
+      (runAsyncP $ prot ()) 
+      (runAsyncF $ bangFAsync fMulticastToken) 
+      dummyAdversaryToken
+    -- require that all deliverances are the same
+    numOutputs <- newIORef 0
+    forMseq_ [0..(length tU')-1] $ \i -> do
+        case (tU' !! i) of 
+            Right (pid, ACastF2P_Deliver m) -> do
+                printYellow (show (tU' !! i))
+                modifyIORef numOutputs $ (+) 1
+            Left m -> return ()
+    no <- readIORef numOutputs
+    monitor (collect ("Unstructured", no))
+
+    (configS', cS', tS') <- run $ runITMinIO 120 $ execUC 
+      propEnvBrachaSafety 
+      (runAsyncP $ prot ()) 
+      (runAsyncF $ bangFAsync fMulticastToken) 
+      dummyAdversaryToken
+    -- require that all deliverances are the same
+    numOutputs <- newIORef 0
+    forMseq_ [0..(length tS')-1] $ \i -> do
+        case (tS' !! i) of 
+            Right (pid, ACastF2P_Deliver m) -> do
+                printYellow (show (tS' !! i))
+                modifyIORef numOutputs $ (+) 1
+            Left m -> return ()
+    no <- readIORef numOutputs
+    monitor (collect ("Structured", no))
 
 -- same as safety environment except all messages are delievered
 -- in the right logical round         

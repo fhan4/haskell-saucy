@@ -18,6 +18,7 @@ import Control.Concurrent.MonadIO
 import Control.Monad (forever, forM)
 import Control.Monad.Loops (whileM_)
 import Data.IORef.MonadIO
+import Data.Data (toConstr, Data)
 import Data.Map.Strict (Map)
 import Data.Set (Set)
 import Data.List ((\\), elemIndex, delete)
@@ -294,6 +295,8 @@ prop_uBenOrTest = monadicIO $ do
   -- for all parties to decide something
     assert ( (Set.size o) <= 1 )
 
+
+
 {- this environment generator is quite structured towards the BenOr protocol where
    where inputs are given, some messages are delivered then messages are sent by corrupt parties
    according to where they are expected by the protocl. 
@@ -453,13 +456,11 @@ prop_benOrLiveness = monadicIO $ do
       (runAsyncF $ bangFAsync fMulticastToken) 
       dummyAdversaryToken
     outputs <- newIORef Set.empty
-    forMseq_ [0..(length t')-1] $ \i -> do
-        case (t' !! i) of 
+    forMseq_ t' $ \out -> do
+        case out of 
             Right (pid, BenOrF2P_Deliver m) -> do
-                liftIO $ putStrLn $ "\n\t ############### GOT SOME output " ++ show (t' !! i) ++ "\n"
                 modifyIORef outputs $ Set.insert m
-            Right _ -> return ()
-            Left m -> return ()
+            _ -> return ()
     o <- readIORef outputs
 
     printYellow ("[Config]\n\n" ++ show config')
@@ -470,6 +471,27 @@ prop_benOrLiveness = monadicIO $ do
   -- for all parties to decide something
     assert ( (Set.size o) == 0 )
 
+{- This property shows how `collect` is used to report, at the end of the test, reports statistics
+    about the number of parties that decided some value over the 100 test cases. This property
+    doesn't test anything. The point here is to use thie  -}
+prop_benOrCollectDecisions ns = monadicIO $ do
+  let prot () = protBenOr
+  forMseq_ ns $ \imp -> do
+    (config', c', t') <- run $ runITMinIO 120 $ execUC 
+      (propEnvBenOrLiveness imp)
+      (runAsyncP $ prot ()) 
+      (runAsyncF $ bangFAsync fMulticastToken) 
+      dummyAdversaryToken
+    
+    numOutputs <- newIORef 0
+    forMseq_ [0..(length t')-1] $ \i -> do
+        case (t' !! i) of 
+            Right (pid, BenOrF2P_Deliver m) -> do
+                modifyIORef numOutputs $ (+) 1
+            _ -> return ()
+
+    n <- readIORef numOutputs
+    monitor (collect (imp, n))
 
 propEnvBenOrAllHonest
   :: (MonadEnvironment m) =>
