@@ -20,6 +20,8 @@ import Data.Map.Strict (Map, (!))
 import Data.List (elemIndex, delete)
 import qualified Data.Map.Strict as Map
 
+import TestTools (envReadOut)
+
 data BenOrMsg = One Int Bool | Two Int | TwoD Int Bool deriving (Show, Eq, Read)
 
 data BenOrOneVariant = BenOrOneSmall | BenOrOneLarge | BenOrOneCorrect deriving (Show, Eq)
@@ -326,33 +328,9 @@ testEnvBenOr
                   (Either ClockA2F (SID, (MulticastA2F BenOrMsg, TransferTokens Int)))), CarryTokens Int) Void
     ClockZ2F Transcript m
 testEnvBenOr numTokens z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
-  transcript <- newIORef []
   let sid = ("sidTestACast", show (["Alice", "Bob", "Carol", "Dave", "Eve", "Frank"], 1::Integer, ""))
 
-  writeChan z2exec $ SttCrupt_SidCrupt sid $ Map.empty
-
-  fork $ forever $ do
-    (pid, m) <- readChan p2z
-    modifyIORef transcript (++ [Right (pid, m)])
-    printEnvIdeal $ "[testEnvACast]: pid[" ++ pid ++ "] output " ++ show m
-    ?pass
-
-  clockChan <- newChan
-  fork $ forever $ do
-    mb <- readChan a2z
-    modifyIORef transcript (++ [Left mb])
-    case mb of
-      SttCruptA2Z_F2A (Left (ClockF2A_Pass)) -> do
-        printEnvReal $ "Pass"
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Count c)) ->
-        writeChan clockChan c
-      SttCruptA2Z_P2A (pid, m) -> do
-        case m of
-          _ -> do
-            printEnvReal $ "[" ++pid++ "] (corrupt) received: " ++ show m
-        ?pass
-      _ -> error $ "Help!" ++ show mb
+  (lastOut, transcript, clockChan) <- envReadOut p2z a2z
 
   () <- readChan pump
   writeChan z2p $ ("Alice", ((ClockP2F_Through $ BenOrP2F_Input True), SendTokens numTokens))
@@ -465,33 +443,11 @@ testEnvBenOrCrupt
                   (Either ClockA2F (SID, (MulticastA2F BenOrMsg, TransferTokens Int)))), CarryTokens Int) Void
     ClockZ2F Transcript m
 testEnvBenOrCrupt z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
-  transcript <- newIORef []
   let sid = ("sidTestACast", show (["Alice", "Bob", "Carol", "Dave", "Eve", "Frank"], 1::Integer, ""))
 
   writeChan z2exec $ SttCrupt_SidCrupt sid $ Map.fromList [("Frank",())]
 
-  fork $ forever $ do
-    (pid, m) <- readChan p2z
-    modifyIORef transcript (++ [Right (pid, m)])
-    printEnvIdeal $ "[testEnvACast]: pid[" ++ pid ++ "] output " ++ show m
-    ?pass
-
-  clockChan <- newChan
-  fork $ forever $ do
-    mb <- readChan a2z
-    modifyIORef transcript (++ [Left mb])
-    case mb of
-      SttCruptA2Z_F2A (Left (ClockF2A_Pass)) -> do
-        printEnvReal $ "Pass"
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Count c)) ->
-        writeChan clockChan c
-      SttCruptA2Z_P2A (pid, m) -> do
-        case m of
-          _ -> do
-            printEnvReal $ "[" ++pid++ "] (corrupt) received: " ++ show m
-        ?pass
-      _ -> error $ "Help!" ++ show mb
+  (lastOut, transcript, clockChan) <- envReadOut p2z a2z
 
   () <- readChan pump
   writeChan z2p $ ("Alice", ((ClockP2F_Through $ BenOrP2F_Input True), SendTokens 32))
