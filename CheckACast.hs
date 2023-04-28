@@ -106,40 +106,9 @@ performACastEnv aCastConfig cmdList z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump
     let (sid :: SID, parties :: [PID], crupt :: Map PID (), t :: Int, leader :: PID) = aCastConfig 
     writeChan z2exec $ SttCrupt_SidCrupt sid crupt
 
-    debugLog <- newIORef []
-    transcript <- newIORef []
-    fork $ forever $ do
-      (pid, m) <- readChan p2z
-      modifyIORef debugLog $ (++ [Right (Right (pid, m))])
-      modifyIORef transcript (++ [Right (pid, m)])
-      --printEnvIdeal $ "[testEnvACast]: pid[" ++ pid ++ "] output " ++ show m
-      ?pass
+    --debugLog <- newIORef []
 
-    clockChan <- newChan
-    fork $ forever $ do
-      mb <- readChan a2z
-      modifyIORef transcript (++ [Left mb])
-      modifyIORef debugLog $ (++ [Right (Left mb)])
-      case mb of
-        SttCruptA2Z_F2A (Left (ClockF2A_Pass)) -> do
-          printEnvReal $ "Pass"
-          ?pass
-        SttCruptA2Z_F2A (Left (ClockF2A_Count c)) ->
-          writeChan clockChan c
-        SttCruptA2Z_P2A (pid, m) -> do
-          case m of
-            _ -> do
-              printEnvReal $ "[" ++pid++ "] (corrupt) received: " ++ show m
-          ?pass
-        SttCruptA2Z_F2A (Left (ClockF2A_Leaks l)) -> do
-          --printEnvIdeal $ "[testEnvACastBroken leaks]: " ++ show l
-          ?pass
-        SttCruptA2Z_F2A (Left (ClockF2A_Advance)) -> do
-          printEnvReal $ "Forced Clock advance"
-          ?pass
-        _ -> error $ "Help!" ++ show mb
-        
-    () <- readChan pump 
+    (lastOut, transcript, clockChan) <- envReadOut p2z a2z
   
     -- TODO: need to do something about this
     writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 1000)
@@ -149,10 +118,10 @@ performACastEnv aCastConfig cmdList z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump
 
     forMseq_ cmdList $ \cmd -> do
         --envExecAsyncCmd z2p z2a z2f clockChan pump cmd envExecACastCmd  
-        modifyIORef debugLog $ (++ [Left cmd])
+        --modifyIORef debugLog $ (++ [Left cmd])
         envExecAsyncCmd z2p z2a z2f clockChan pump cmd envExecACastCmd
-    dl <- readIORef debugLog  
-    liftIO $ putStrLn $ "\n\t[Real World dl]\n" ++ (show dl)
+    --dl <- readIORef debugLog  
+    --liftIO $ putStrLn $ "\n\t[Real World dl]\n" ++ (show dl)
     liftIO $ putStrLn $ "\n\t[Real World cl]\n" ++ (show cmdList)
     writeChan outp =<< readIORef transcript
 
@@ -233,39 +202,10 @@ propUEnvBrachaSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
 
   transcript <- newIORef []
   cmdList <- newIORef []
-  --debugLog <- newIORef Map.empty
-  debugLog <- newIORef []
+  --debugLog <- newIORef []
 
   numDelivers <- newIORef 0
-  
-  fork $ forever $ do
-    (pid, m) <- readChan p2z
-    modifyIORef transcript (++ [Right (pid, m)])
-    modifyIORef debugLog $ (++ [Right (Right (pid, m))])
-    ?pass
-
-  clockChan <- newChan
-  fork $ forever $ do
-    mb <- readChan a2z
-    modifyIORef transcript $ (++ [Left mb])
-    modifyIORef debugLog $ (++ [Right (Left mb)])
-    case mb of
-      SttCruptA2Z_F2A (Left (ClockF2A_Pass)) -> do
-        printEnvReal $ "Pass"
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Count c)) ->
-        writeChan clockChan c
-      SttCruptA2Z_P2A (pid, m) -> do
-        case m of
-          _ -> do
-            printEnvReal $ "[" ++pid++ "] (corrupt) received: " ++ show m
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Leaks l)) -> do
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Advance)) -> do
-        printEnvReal $ "Forced Clock advance"
-        ?pass
-      _ -> error $ "Help!" ++ show mb
+  (lastOut, transcript, clockChan) <- envReadOut p2z a2z
 
   () <- readChan pump
   liftIO $ putStrLn $ "asking for count"
@@ -281,7 +221,7 @@ propUEnvBrachaSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
  
   let checkQueue n = do
         liftIO $ putStrLn $ "\t\t\t\t\t\tgetting checkQueue"
-        modifyIORef debugLog $ (++ [Left (Right (CmdGetCount, 0))])
+        --modifyIORef debugLog $ (++ [Left (Right (CmdGetCount, 0))])
         modifyIORef cmdList $ (++ [Right (CmdGetCount, 0)])
         writeChan z2a $ (SttCruptZ2A_A2F (Left ClockA2F_GetCount), SendTokens 0)
         
@@ -305,7 +245,7 @@ propUEnvBrachaSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
      
     inp :: [Either ACastInput AsyncInput] <- readIORef firstInp 
     liftIO $ putStrLn $ "Input: " ++ show inp
-    modifyIORef debugLog $ (++ [Left (inp !! 0)])
+    --modifyIORef debugLog $ (++ [Left (inp !! 0)])
     modifyIORef cmdList $ (++ [(inp !! 0)])
     () <- envExecAsyncCmd z2p z2a z2f clockChan pump (inp !! 0) envExecACastCmd
 
@@ -316,21 +256,21 @@ propUEnvBrachaSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
       modifyIORef someCounter $ (+) 1
       sc <- readIORef someCounter
       modifyIORef cmdList $ (++ [Right (CmdGetCount, 0)])
-      modifyIORef debugLog $ (++ [Left (Right (CmdGetCount, 0))])
+      --modifyIORef debugLog $ (++ [Left (Right (CmdGetCount, 0))])
       writeChan z2a $ (SttCruptZ2A_A2F (Left ClockA2F_GetCount), SendTokens 0)
       c <- readChan clockChan
       
       inps <- liftIO $ generate $ aCastGenerator 20 c ssids parties inputs (n*5)
       forMseq_ inps $ \i -> do
-        modifyIORef debugLog $ (++ [Left i])
+        --modifyIORef debugLog $ (++ [Left i])
         modifyIORef cmdList $ (++ [i])
         envExecAsyncCmd z2p z2a z2f clockChan pump i envExecACastCmd
 
   tr <- readIORef transcript
   cl <- readIORef cmdList
   
-  dl <- readIORef debugLog
-  liftIO $ putStrLn $ "\n\t[Ideal World dl]\n" ++ (show dl)
+  --dl <- readIORef debugLog
+  --liftIO $ putStrLn $ "\n\t[Ideal World dl]\n" ++ (show dl)
   liftIO $ putStrLn $ "\n\t[Ideal World cl]\n" ++ (show cl)
 
   writeChan outp ((sid, parties, crupt, t, leader), cl, tr)
@@ -396,39 +336,10 @@ propEnvBrachaSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   
   writeChan z2exec $ SttCrupt_SidCrupt sid crupt
 
-  transcript <- newIORef []
   cmdList <- newIORef []
 
   numDelivers <- newIORef 0
-  
-  fork $ forever $ do
-    (pid, m) <- readChan p2z
-    modifyIORef transcript (++ [Right (pid, m)])
-    --printEnvIdeal $ "[testEnvACast]: pid[" ++ pid ++ "] output " ++ show m
-    ?pass
-
-  clockChan <- newChan
-  fork $ forever $ do
-    mb <- readChan a2z
-    modifyIORef transcript (++ [Left mb])
-    case mb of
-      SttCruptA2Z_F2A (Left (ClockF2A_Pass)) -> do
-        printEnvReal $ "Pass"
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Count c)) ->
-        writeChan clockChan c
-      SttCruptA2Z_P2A (pid, m) -> do
-        case m of
-          _ -> do
-            printEnvReal $ "[" ++pid++ "] (corrupt) received: " ++ show m
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Leaks l)) -> do
-        --printEnvIdeal $ "[testEnvACastBroken leaks]: " ++ show l
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Advance)) -> do
-        printEnvReal $ "Forced Clock advance"
-        ?pass
-      _ -> error $ "Help!" ++ show mb
+  (lastOut, transcript, clockChan) <- envReadOut p2z a2z
 
   () <- readChan pump
   writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 1000)
@@ -497,8 +408,8 @@ propEnvBrachaSafety z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   --writeChan outp =<< readIORef transcript
   writeChan outp ((sid, parties, crupt, t, leader), reverse cl, tr)
 
-{- 		
-		[ PROPERTY ]
+{-    
+    [ PROPERTY ]
 -}
 prop_brachaSafety = monadicIO $ do
     let variantT = ACastTSmall
@@ -530,8 +441,8 @@ prop_brachaSafety = monadicIO $ do
     assert ( (Set.size o) <= 1 )
     assert (t == t')
 
-{- 		
-		[ PROPERTY ]
+{-    
+    [ PROPERTY ]
 -}
 prop_compareSafetyStructure = monadicIO $ do 
     let variantT = ACastTSmall
