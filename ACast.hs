@@ -18,6 +18,7 @@ import Control.Monad.Loops (whileM_)
 import Data.IORef.MonadIO
 import Data.Map.Strict (Map)
 import Data.List (elemIndex, delete)
+import TestTools (envReadOut)
 import qualified Data.Map.Strict as Map
 
 {- fACast: an asynchronous broadcast functionality, Bracha's Broadcast -}
@@ -228,31 +229,7 @@ testEnvACast z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   let sid = ("sidTestACast", show ("Alice", ["Alice", "Bob", "Carol", "Dave"], 1::Integer, ""))
   writeChan z2exec $ SttCrupt_SidCrupt sid Map.empty
 
-  transcript <- newIORef []
-  
-  fork $ forever $ do
-    (pid, m) <- readChan p2z
-    modifyIORef transcript (++ [Right (pid, m)])
-    printEnvIdeal $ "[testEnvACast]: pid[" ++ pid ++ "] output " ++ show m
-    ?pass
-
-  clockChan <- newChan
-  fork $ forever $ do
-    mb <- readChan a2z
-    modifyIORef transcript (++ [Left mb])
-    case mb of
-      SttCruptA2Z_F2A (Left (ClockF2A_Pass)) -> do
-        printEnvReal $ "Pass"
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Count c)) ->
-        writeChan clockChan c
-      SttCruptA2Z_P2A (pid, m) -> do
-        case m of
-          _ -> do
-            printEnvReal $ "[" ++pid++ "] (corrupt) received: " ++ show m
-        ?pass
-      _ -> error $ "Help!" ++ show mb
-
+  (lastOut, transcript, clockChan) <- envReadOut p2z a2z
 
   -- Have Alice write a message
   () <- readChan pump
@@ -529,34 +506,8 @@ testEnvACastBrokenValidity z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = d
 
 
   writeChan z2exec $ SttCrupt_SidCrupt sid $ Map.fromList [("Dave",())]
-
-  transcript <- newIORef []
-
-  fork $ forever $ do
-    (pid, m) <- readChan p2z
-    modifyIORef transcript (++ [Right (pid, m)])
-    printEnvIdeal $ "[testEnvACast]: pid[" ++ pid ++ "] output " ++ show m
-    ?pass
-
-  clockChan <- newChan
-  fork $ forever $ do
-    mb <- readChan a2z
-    modifyIORef transcript (++ [Left mb])
-    case mb of
-      SttCruptA2Z_F2A (Left (ClockF2A_Pass)) -> do
-        printEnvReal $ "Pass"
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Count c)) ->
-        writeChan clockChan c
-      SttCruptA2Z_P2A (pid, m) -> do
-        case m of
-          _ -> do
-            printEnvReal $ "[" ++pid++ "] (corrupt) received: " ++ show m
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Leaks l)) -> do
-        printEnvIdeal $ "[testEnvACastBroken leaks]: " ++ show l
-        ?pass
-      _ -> error $ "Help!" ++ show mb
+  
+  (lastOut, transcript, clockChan) <- envReadOut p2z a2z
 
   () <- readChan pump
   writeChan z2p ("Alice", ((ClockP2F_Through $ ACastP2F_Input "1"), SendTokens 100))
@@ -602,36 +553,7 @@ testEnvACastBrokenAgreement z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = 
 
   writeChan z2exec $ SttCrupt_SidCrupt sid $ Map.fromList [("Alice",())]
 
-  transcript <- newIORef []
-
-  fork $ forever $ do
-    (pid, m) <- readChan p2z
-    modifyIORef transcript (++ [Right (pid, m)])
-    printEnvIdeal $ "[testEnvACast]: pid[" ++ pid ++ "] output " ++ show m
-    ?pass
-
-  clockChan <- newChan
-  fork $ forever $ do
-    mb <- readChan a2z
-    modifyIORef transcript (++ [Left mb])
-    case mb of
-      SttCruptA2Z_F2A (Left (ClockF2A_Pass)) -> do
-        printEnvReal $ "Pass"
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Count c)) ->
-        writeChan clockChan c
-      SttCruptA2Z_P2A (pid, m) -> do
-        case m of
-          _ -> do
-            printEnvReal $ "[" ++pid++ "] (corrupt) received: " ++ show m
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Leaks l)) -> do
-        printEnvIdeal $ "[testEnvACastBroken leaks]: " ++ show l
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Advance)) -> do
-        printEnvIdeal $ "Clock Forced Advance"
-        ?pass
-      _ -> error $ "Help!" ++ show mb
+  (lastOut, transcript, clockChan) <- envReadOut p2z a2z
 
   () <- readChan pump
   writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, (MulticastA2F_Deliver "Bob" (ACast_VAL "1"), DeliverTokensWithMessage 8))), SendTokens 24)
@@ -682,36 +604,7 @@ testEnvACastBrokenReliability z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
     
   writeChan z2exec $ SttCrupt_SidCrupt sid $ Map.fromList [("Alice",())]
 
-  transcript <- newIORef []
-  
-  fork $ forever $ do
-    (pid, m) <- readChan p2z
-    modifyIORef transcript (++ [Right (pid, m)])
-    printEnvIdeal $ "[testEnvACast]: pid[" ++ pid ++ "] output " ++ show m
-    ?pass
-
-  clockChan <- newChan
-  fork $ forever $ do
-    mb <- readChan a2z
-    modifyIORef transcript (++ [Left mb])
-    case mb of
-      SttCruptA2Z_F2A (Left (ClockF2A_Pass)) -> do
-        printEnvReal $ "Pass"
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Count c)) ->
-        writeChan clockChan c
-      SttCruptA2Z_P2A (pid, m) -> do
-        case m of
-          _ -> do
-            printEnvReal $ "[" ++pid++ "] (corrupt) received: " ++ show m
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Leaks l)) -> do
-        printEnvIdeal $ "[testEnvACastBroken leaks]: " ++ show l
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Advance)) -> do
-        printEnvReal $ "Forced Clock Advance"
-        ?pass
-      _ -> error $ "Help!" ++ show mb
+  (lastOut, transcript, clockChan) <- envReadOut p2z a2z
 
   () <- readChan pump
   writeChan z2a $ ((SttCruptZ2A_A2F $ Right (ssidAlice1, (MulticastA2F_Deliver "Bob" (ACast_VAL "1"), DeliverTokensWithMessage 8))), SendTokens 21)
@@ -772,41 +665,7 @@ testEnvACastBrokenTermination z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp 
   
   writeChan z2exec $ SttCrupt_SidCrupt sid Map.empty
 
-  transcript <- newIORef []
-  
-  fork $ forever $ do
-    (pid, m) <- readChan p2z
-    modifyIORef transcript (++ [Right (pid, m)])
-    printEnvIdeal $ "[testEnvACast]: pid[" ++ pid ++ "] output " ++ show m
-    ?pass
-
-
-  leak <- newIORef []
-
-  clockChan <- newChan
-  fork $ forever $ do
-    mb <- readChan a2z
-    modifyIORef transcript (++ [Left mb])
-    case mb of
-      SttCruptA2Z_F2A (Left (ClockF2A_Pass)) -> do
-        printEnvReal $ "Pass"
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Count c)) ->
-        writeChan clockChan c
-      SttCruptA2Z_P2A (pid, m) -> do
-        case m of
-          _ -> do
-            printEnvReal $ "[" ++pid++ "] (corrupt) received: " ++ show m
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Leaks l)) -> do
-        printEnvIdeal $ "[testEnvACastBroken leaks]: " ++ show l
-        lk <- readIORef leak
-        writeIORef leak (lk ++ l)
-        ?pass
-      SttCruptA2Z_F2A (Left (ClockF2A_Advance)) -> do
-        printEnvReal $ "Forced Clock Advance"
-        ?pass
-      _ -> error $ "Help!" ++ show mb
+  (lastOut, transcript, clockChan) <- envReadOut p2z a2z
   
   -- Have Alice write a message
   () <- readChan pump
@@ -871,8 +730,8 @@ testACastBroken = runITMinIO 120 $ execUC
 testCompareBrokenAgreement :: IO Bool
 testCompareBrokenAgreement = runITMinIO 120 $ do
   let variantT = ACastTSmall
-  let variantR = ACastRSmall
-  let variantD = ACastDSmall
+  let variantR = ACastRCorrect
+  let variantD = ACastDCorrect
   let prot () = protACastBroken variantT variantR variantD
   liftIO $ putStrLn "*** RUNNING REAL WORLD ***"
   t1R <- runRandRecord $ execUC
@@ -955,13 +814,13 @@ makeSyncLog handler req = do
   
 {-- TODO: Simulator for ACast --}
 simACastBroken :: MonadAdversaryToken m => 
-	(MonadProtocol m => Protocol ((ClockP2F (ACastP2F String)), CarryTokens Int)
-		(ACastF2P String) (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
-		(SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)) m) ->
+  (MonadProtocol m => Protocol ((ClockP2F (ACastP2F String)), CarryTokens Int)
+    (ACastF2P String) (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
+    (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)) m) ->
                                            
-	Adversary 
-		((SttCruptZ2A (ClockP2F (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)))
-									(Either (ClockA2F) (SID, (MulticastA2F (ACastMsg String), TransferTokens Int)))), CarryTokens Int)
+  Adversary 
+    ((SttCruptZ2A (ClockP2F (SID, ((ACastMsg String, TransferTokens Int), CarryTokens Int)))
+                  (Either (ClockA2F) (SID, (MulticastA2F (ACastMsg String), TransferTokens Int)))), CarryTokens Int)
     (SttCruptA2Z (SID, (MulticastF2P (ACastMsg String), CarryTokens Int))
                  (Either (ClockF2A  (SID,((ACastMsg String, TransferTokens Int), CarryTokens Int)))
                          (SID, (MulticastF2A (ACastMsg String), TransferTokens Int))))

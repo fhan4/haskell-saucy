@@ -73,6 +73,16 @@ rqDeliverOrProgress n = frequency
       (10, if n==0 then return [] else (:) <$> return CmdMakeProgress <*> (rqDeliverOrProgress (n-1)))
     ]
 
+countPOutputs :: [Either _ a] -> a -> IO Int
+countPOutputs transcript output = do
+	num <- newIORef 0
+	forMseq_ transcript $ \out -> do
+		case out of
+			Right output -> modifyIORef num $ (+) 1
+			_ -> return ()
+	n <- readIORef num
+	return n
+
 -- environment generate a sequence of Deliver and MakeProgress messages
 -- and executes them
 envDeliverOrProgressSubset :: (MonadEnvironment m) =>
@@ -170,6 +180,31 @@ envDeliverOrProgressAll thingsHappened clockChan t forCmdList _ _ (a2z, z2a) (f2
  
   c <- readIORef cmdList
   writeChan forCmdList c
+
+envReadOut :: (MonadEnvironment m, Show p2z) => Chan (PID, p2z) -> 
+	Chan (SttCruptA2Z f2p (Either (ClockF2A leak) f2a)) ->
+	m (IORef (Maybe (Either (SttCruptA2Z f2p (Either (ClockF2A leak) f2a)) (PID, p2z))),
+	IORef [Either (SttCruptA2Z f2p (Either (ClockF2A leak) f2a)) (PID, p2z)], 
+	Chan Int)
+envReadOut _p2z _a2z = do
+	clockChan <- newChan
+	lastOut <- newIORef Nothing
+	transcript <- newIORef []
+	fork $ forever $ do
+		(pid, m) <- readChan _p2z 
+		liftIO $ putStrLn $ "\ESC[31mParty [" ++ show pid ++ "]: " ++ show m ++ "\ESC[0m"
+		modifyIORef transcript $ (++ [Right (pid, m)])
+		writeIORef lastOut (Just (Right (pid, m)))
+		?pass
+	fork $ forever $ do
+		m <- readChan _a2z
+		modifyIORef transcript $ (++ [Left m])
+		case m of
+			SttCruptA2Z_F2A (Left (ClockF2A_Count c)) -> writeChan clockChan c
+			_ -> do 
+				writeIORef lastOut (Just (Left m))
+				?pass
+	return (lastOut, transcript, clockChan)	
  
 -- does no MakeProgress messages only Delivers
 -- until the runqueue is empty
