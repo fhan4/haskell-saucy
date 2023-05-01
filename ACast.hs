@@ -908,12 +908,12 @@ testCompareBrokenReliability = runITMinIO 120 $ do
   liftIO $ putStrLn ""
   liftIO $ putStrLn ""
   liftIO $ putStrLn "*** RUNNING IDEAL WORLD ***"
-  --t2 <- runRandReplay bits $ execUC
-  --           testEnvACastBrokenReliability
-  --           (idealProtocolToken)
-  --           (runAsyncF fACastToken)
-  --           (runTokenA $ simACastBroken $ prot ())
-  let t2 = []
+  t2 <- runRandReplay bits $ execUC
+             testEnvACastBrokenReliability
+             (idealProtocolToken)
+             (runAsyncF fACastToken)
+             (runTokenA $ simACastBroken $ prot ())
+  --let t2 = []
   return (t1 == t2)
 
 testCompareBrokenValidity :: IO Bool
