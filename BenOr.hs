@@ -383,51 +383,52 @@ testEnvBenOr
     ClockZ2F Transcript m
 testEnvBenOr numTokens z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   let sid = ("sidTestACast", show (["Alice", "Bob", "Carol", "Dave", "Eve", "Frank"], 1::Integer, ""))
-  writeChan z2exec $ SttCrupt_SidCrupt sid $ Map.empty
+  --writeChan z2exec $ SttCrupt_SidCrupt sid $ Map.empty
+  writeChan z2exec $ SttCrupt_SidCrupt sid $ Map.fromList [("Alice",())]
 
   (lastOut, transcript, clockChan) <- envReadOut p2z a2z
 
   () <- readChan pump
-  writeChan z2p $ ("Alice", ((ClockP2F_Through $ BenOrP2F_Input True), SendTokens numTokens))
+  --writeChan z2p $ ("Alice", ((ClockP2F_Through $ BenOrP2F_Input True), SendTokens numTokens))
  
-  () <- readChan pump
+  --() <- readChan pump
   writeChan z2p $ ("Bob", ((ClockP2F_Through $ BenOrP2F_Input True), SendTokens numTokens))
  
   () <- readChan pump
   writeChan z2p $ ("Carol", ((ClockP2F_Through $ BenOrP2F_Input True), SendTokens numTokens))
 
   () <- readChan pump
-  writeChan z2p $ ("Dave", ((ClockP2F_Through $ BenOrP2F_Input False), SendTokens numTokens))
+  writeChan z2p $ ("Dave", ((ClockP2F_Through $ BenOrP2F_Input True), SendTokens numTokens))
   
   () <- readChan pump
-  writeChan z2p $ ("Eve", ((ClockP2F_Through $ BenOrP2F_Input False), SendTokens numTokens))
+  writeChan z2p $ ("Eve", ((ClockP2F_Through $ BenOrP2F_Input True), SendTokens numTokens))
 
   () <- readChan pump
-  writeChan z2p $ ("Frank", ((ClockP2F_Through $ BenOrP2F_Input False), SendTokens numTokens))
+  writeChan z2p $ ("Frank", ((ClockP2F_Through $ BenOrP2F_Input True), SendTokens numTokens))
 
-  --() <- readChan pump
-  --writeChan z2a $ ((SttCruptZ2A_A2F (Left ClockA2F_GetCount)), SendTokens 0)
-  --c <- readChan clockChan 
+  () <- readChan pump
+  writeChan z2a $ ((SttCruptZ2A_A2F (Left ClockA2F_GetCount)), SendTokens 0)
+  c <- readChan clockChan 
 
-  ---- everyone's multicasts of the ONE message
-  --forMseq_ [1..36] $ \x -> do
-  --  writeChan z2a $ ((SttCruptZ2A_A2F (Left (ClockA2F_Deliver 0))), SendTokens 0)
-  --  readChan pump
+  -- everyone's multicasts of the ONE message
+  forMseq_ [1..36] $ \x -> do
+    writeChan z2a $ ((SttCruptZ2A_A2F (Left (ClockA2F_Deliver 0))), SendTokens 0)
+    readChan pump
 
-  ---- everyone's TWO messages
-  --forMseq_ [1..36] $ \x -> do
-  --  writeChan z2a $ ((SttCruptZ2A_A2F (Left (ClockA2F_Deliver 0))), SendTokens 0)
-  --  readChan pump
+  -- everyone's TWO messages
+  forMseq_ [1..36] $ \x -> do
+    writeChan z2a $ ((SttCruptZ2A_A2F (Left (ClockA2F_Deliver 0))), SendTokens 0)
+    readChan pump
 
-  ---- everyone's ONE message round 2
-  --forMseq_ [1..36] $ \x -> do
-  --  writeChan z2a $ ((SttCruptZ2A_A2F (Left (ClockA2F_Deliver 0))), SendTokens 0)
-  --  readChan pump
-  --
-  ---- everyone's TWO messages
-  --forMseq_ [1..36] $ \x -> do
-  --  writeChan z2a $ ((SttCruptZ2A_A2F (Left (ClockA2F_Deliver 0))), SendTokens 0)
-  --  readChan pump
+  -- everyone's ONE message round 2
+  forMseq_ [1..36] $ \x -> do
+    writeChan z2a $ ((SttCruptZ2A_A2F (Left (ClockA2F_Deliver 0))), SendTokens 0)
+    readChan pump
+  
+  -- everyone's TWO messages
+  forMseq_ [1..36] $ \x -> do
+    writeChan z2a $ ((SttCruptZ2A_A2F (Left (ClockA2F_Deliver 0))), SendTokens 0)
+    readChan pump
 
   let checkQueue = do
         writeChan z2a $ ((SttCruptZ2A_A2F (Left ClockA2F_GetCount)), SendTokens 1)
@@ -451,7 +452,7 @@ testEnvBenOr numTokens z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
 
 testBenOr :: IO Transcript
 testBenOr = runITMinIO 120 $ execUC
-  (testEnvBenOr 36)
+  (testEnvBenOr 100)
   (runAsyncP $ protBenOr)
   (runAsyncF $ bangFAsync fMulticastToken)
   dummyAdversaryToken

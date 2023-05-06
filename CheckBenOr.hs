@@ -247,13 +247,13 @@ propEnvBenOrLivenessObserve
                           (SID, (MulticastF2A BenOrMsg, TransferTokens Int))))
      ((SttCruptZ2A (ClockP2F (SID, ((BenOrMsg, TransferTokens Int), CarryTokens Int))) 
                   (Either ClockA2F (SID, (MulticastA2F BenOrMsg, TransferTokens Int)))), CarryTokens Int) Void
-     (ClockZ2F) (BenOrConfig, [Either BenOrInput AsyncInput], Transcript) m
-propEnvBenOrObserve inputTokens z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
+     (ClockZ2F) (BenOrConfig, Transcript) m
+propEnvBenOrLivenessObserve inputTokens z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
 {- The goal here is to have a crupt party to just observe how any rounds
-		it takes for the protocol to terminte. We just look at the latest round
-		received before all honest parties terminate.
-	- OPTION 1: we can condition only on test cases where everyone terminates
-							to observe only how many rounds it takes. -}
+    it takes for the protocol to terminte. We just look at the latest round
+    received before all honest parties terminate.
+  - OPTION 1: we can condition only on test cases where everyone terminates
+              to observe only how many rounds it takes. -}
   let extendRight conf = show ("", conf)
   
   let parties = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank"] :: [PID]
@@ -264,37 +264,80 @@ propEnvBenOrObserve inputTokens z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump out
   let sid = (sssid, show (parties, t, ""))
 
   writeChan z2exec $ SttCrupt_SidCrupt sid (Map.fromList [(crupt, ())])
-  cmdList <- newIORef []  
   thingsHappened <- newIORef 0
 
   (lastOut, transcript, clockChan) <- envReadOut p2z a2z
   
-	() <- readChan pump
+  () <- readChan pump
   writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 1000)
   c <- readChan clockChan 
-  modifyIORef cmdList $ (++) [Right (CmdGetCount, 1000)]
 
-	lastRound <- newIORef Int
-	let logRound msg = do
-		case msg of
-			Just (Left (SttCruptA2Z_P2A (_sid, (MulticastF2P_Deliver m, SendTokens st)))) -> do
-				case m of
-					
-				
-
+  finalRound <- newIORef 0
+  let lastRound ctr party = do
+              t <- readIORef transcript
+              forMseq_ (deleteNth 0 (reverse t)) $ \msg -> do
+                case msg of
+                  Left (SttCruptA2Z_P2A (pid, (s, (MulticastF2P_Deliver m, stk)))) -> 
+                    case m of
+                      One r b -> readIORef finalRound >>= writeIORef finalRound . max r
+                      Two r -> readIORef finalRound >>= writeIORef finalRound . max r
+                      TwoD r b -> readIORef finalRound >>= writeIORef finalRound . max r
+                  _ -> return () 
+  
+  let checkQueue = do
+        writeChan z2a $ (SttCruptZ2A_A2F (Left ClockA2F_GetCount), SendTokens 0)
+        c <- readChan clockChan
+        liftIO $ putStrLn $ "Z[testEnvACastIdeal]: Events remaining: " ++ show c
+        return (c > 0)
+        
   -- choose input values for the honest parties
   -- should create 6 One messages each 
   forMseq_ honest $ \h -> do
     -- choose a boolean
     x <- liftIO $ generate chooseAny
     writeChan z2p $ (h, ((ClockP2F_Through $ BenOrP2F_Input x), SendTokens inputTokens))
-    () <- readChan pump
-    modifyIORef cmdList $ (++) [Left $ (CmdBenOrP2F h x, inputTokens)]
+    readChan pump
+    
+  whileM_ checkQueue $ do
+    writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 0)
+    c <- readChan clockChan
+    idx <- liftIO $ generate $ choose (0,c-1)
+    writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx)), SendTokens 0)
+    readChan pump
+  
+  tr <- readIORef transcript 
+  writeChan outp ((sid, parties, (Map.fromList [(crupt,())]), t), tr)
 
-	
+prop_benOrObserve = monadicIO $ do
+  let prot () = protBenOr
+  (config', t') <- run $ runITMinIO 120 $ execUC 
+    (propEnvBenOrLivenessObserve 1000000)
+    (runAsyncP $ prot ()) 
+    (runAsyncF $ bangFAsync fMulticastToken) 
+    dummyAdversaryToken
+ 
+  finalRound <- newIORef 0
+  commitRound <- newIORef 0 
+  numOutputs <- newIORef 0
+  forMseq_ t' $ \out -> do
+      case out of
+        Left (SttCruptA2Z_P2A (pid, (s, (MulticastF2P_Deliver m, stk)))) ->
+          case m of
+            One r b -> readIORef finalRound >>= writeIORef finalRound . max r
+            Two r -> readIORef finalRound >>= writeIORef finalRound . max r
+            TwoD r b -> readIORef finalRound >>= writeIORef finalRound . max r
+        Right (pid, BenOrF2P_Deliver m) -> do
+          readIORef finalRound >>= writeIORef commitRound  
+          modifyIORef numOutputs $ (+) 1
+        _ -> return ()
+
+  n <- readIORef numOutputs
+  pre $ (n == 5)
+  cr <- readIORef commitRound
+  monitor (collect cr)
 
 {- this environment generator is quite structured towards the BenOr protocol where
-   where inputs are given, some messages are delivered then messages are sent by corrupt parties
+   where inputs are given, some messages are delivered thenmessages are sent by corrupt parties
    according to where they are expected by the protocl. 
    The next steps are:
     1. Create a generic environment that is agnostic to the protocol and takes in 
