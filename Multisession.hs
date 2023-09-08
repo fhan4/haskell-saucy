@@ -63,6 +63,18 @@ instance Show Void where
      instance at a time.
  -}
 
+
+--duplexF :: MonadFunctionality m =>
+--	(forall m'. MonadFunctionality m' => Functionality p2fL f2pL a2fL f2aL Void Void m') ->
+--	(forall m'. MonadFunctionality m' => Functionality p2fR f2pR a2fR f2aR Void Void m') ->
+--	Functionality (Either p2fL p2fR) (Either f2pL f2pR) (Either a2fL a2fR) (Either f2aL f2aR) Void Void m
+--duplexF fL fR (p2f, f2p) (a2f, f2a) _ = do
+--	(p2fL, p2fR) <- detwoplexRd p2f
+--	(a2fL, a2fR) <- detwoplexRd a2f
+--
+--	f2a 
+
+
 {-- Part I. Defining Multisession extensions !F and !P --}
 
 bangF

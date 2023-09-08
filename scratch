@@ -1,40 +1,88 @@
-s_broadcast: N
-is dissent worse case is 2 s_broacasts: 2N
-bcast AUX: N
+* even with correct thresholds benor should fail if there are 2 corrupt parties among 6. They can equivocate and parties confirm different things
+	problem here might be that it isn't caught in coverage
+Step 1: hardcode honest inputs and hardcode inputs for crupt parties and run random scheduler see if something comes up
+Step 2: if nothing above, then try to set equivocation as a pre-condition and see how many test cases are thrown out before something happens
 
-N=4
+The current liveness setup
+==========================
+every instance of the protocol flips and coin and with some probability _should_ fail to decide on a value because it raises the decide threshold
 
---------------------------------------------
+the environment give inputs to all honest parties 
+-> generates crupt input (messages only)
+-> then it chooses between subset of queue and delivering the whole queue
+	generate $ frequency [ (1, rqDeliverAll c), (5, rqDeliverChoice c 10) ]
 
-> honest party inputs
-> send corrupt alie message (VAL, ECHO, READY)
-> deliver some index
-> make progress
+When run with liveCoin = 10 and rqDeliverAll we see 90% termination of all parties:
+92% (5,5)
+ 5% (5,4)
+ 3% (5,3)
 
-requires parties to handle all manner of messages out of order
---> forces UC spec to be closer to reality
+91% (10,5)
+ 6% (10,4)
+ 3% (10,3)
 
-CHECK: would ACast handle this?
+93% (20,5)
+ 4% (20,4)
+ 3% (20,3)
 
---------------------------------------
+89% (50,5)
+ 6% (50,4)
+ 5% (50,3)
 
-the coin and token has a carrytokens returning on f2p
-fMulticastToken also has CarryTokens on F2P
+When livecoin = 10 and run with (1, all), (5, list)
+43% (5,0)
+27% (5,5)
+11% (5,3)
+ 8% (5,2)
+ 7% (5,4)
+ 4% (5,1)
 
-BenOr thresholds
-N-t        One messages
-	if (N+t)/2    One --> TwoD message
-	ese 		  One --> Two message
+57% (10,5)
+22% (10,3)
+10% (10,4)
+ 4% (10,0)
+ 4% (10,2)
+ 3% (10,1)
 
-N-t		   TwoX messages
-	if t+1 		D-messages for v set x = v
-	if (N+t)/2	D-messages decide v
-	else xp = coin flip
+58% (20,5)
+17% (20,3)
+10% (20,4)
+ 9% (20,2)
+ 4% (20,1)
+ 2% (20,0)
 
--------------------------------------
+55% (50,5)
+16% (50,4)
+15% (50,3)
+10% (50,2)
+ 3% (50,1)
+ 1% (50,0)
+No clear relationship
 
-S_VAL messages for both bits per round
-	-- choose 0, 1 or both to S_VAL for each round
-EST messages for both bits per round
-	-- choose 0, 1 or both for EST for each round
-AUX is treated the same way
+
+sid :: (pidS :: PID, parties :: [PID], sssid :: String)
+leaks :: [(sid, ((BenOrMsg, DeliverTokensWithMessage st), SendTokens))]
+
+specify a list of tuples of parties to censor
+l :: [ (PID, PID) ]
+
+create a list
+l :: [Bool]
+where 
+	if (l !! i) then censor
+	else allow
+
+
+
+N=6 t=1
+N-t = 5
+N+t/2 = 3
+t+1 = 2
+
+A=? B=T C=T D=F E=F F=F
+	??	n-t n-t n-t n-t   (because of A)
+	 	2_  2F  2F  2_    (A makes D/E send 2F) 
+		T   T   F   F     (
+
+
+

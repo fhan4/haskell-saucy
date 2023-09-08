@@ -10,6 +10,7 @@ import Async
 import Multisession
 import Multicast
 import TokenWrapper
+import TestTools
 
 import Safe
 import Control.Concurrent.MonadIO
@@ -70,22 +71,24 @@ possibleValues = [return "crypto", return "cs", return "security", return "biolo
 -- group of keys. Here we use the pool of keys and values above
 merkleGenerator :: Int -> [Gen PID] -> Gen [(PID, ClockP2F MerkleP2F)]
 merkleGenerator n parties = frequency $
-  [ (1, if n==0 then return [] else (:) <$> 
+  [ (1, return []),
+    (5, if n==0 then return [] else (:) <$> 
       (oneof parties >>=
         \pid -> (oneof possibleKeys >>= 
           \k -> (oneof possibleValues >>= 
             \v -> return (pid, ClockP2F_Through $ MerkleP2F_Set k v)))) <*> merkleGenerator (n-1) parties),
-    (1, if n==0 then return [] else (:) <$> 
+    (5, if n==0 then return [] else (:) <$> 
       (oneof parties >>=
         \pid -> oneof possibleKeys >>= 
           \k -> (oneof possibleValues >>= 
             \c -> (oneof possibleValues >>= 
               \v -> return (pid, ClockP2F_Through $ MerkleP2F_CAS k c v)))) <*> merkleGenerator (n-1) parties),
-    (1, if n==0 then return [] else (:) <$> 
+    (5, if n==0 then return [] else (:) <$> 
       (oneof parties >>=
         \pid -> oneof possibleKeys >>= 
           \k -> return (pid, ClockP2F_Through $ MerkleP2F_Get k)) <*> merkleGenerator (n-1) parties)
   ]
+
 
 wschars = "\t\r\n"
 lstrip :: String -> String
@@ -107,7 +110,7 @@ protMerkleeyes (z2p, p2z) (f2p, p2f) = do
 
   let _set_tx k v = do
         (_, Just hout, _, _) <- createProcess (proc "python3" ["jepsen/query.py", "set", ?pid, show k, show v]){ std_out = CreatePipe }
-        threadDelay 1500000
+        threadDelay 500000
         hGetContents hout
 
   let _get_tx k = do
@@ -150,7 +153,9 @@ protMerkleeyes (z2p, p2z) (f2p, p2f) = do
             liftIO $ putStrLn $ "[" ++ show ?pid ++ "] txing"
             r <- liftIO $ _tx_tx h
             writeChan p2z (MerkleF2P_Arb r)
-      CliF2P_Ok -> writeChan p2z MerkleF2P_Ok
+      CliF2P_Ok -> do
+            liftIO $ putStrLn $ "got the OK"
+            writeChan p2z MerkleF2P_Ok
   return ()
 
 testTenderEnv :: MonadEnvironment m =>
@@ -210,16 +215,38 @@ propEnvTest z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump outp = do
   let parties = [return "2", return "3", return "4"]
 
   () <- readChan pump
-  inps <- liftIO $ generate $ merkleGenerator 30 parties
+  --inps <- liftIO $ generate $ merkleGenerator 30 parties
   txHashes <- newIORef []
   transcript <- newIORef []
+  --forMseq_ inps $ \cmd -> do
+  --  writeChan z2p cmd
+  --  (pid, m) <- readChan p2z 
+  --  modifyIORef transcript (++ [(pid, m)])
+  --  case m of
+  --    MerkleF2P_TxHash h -> do modifyIORef txHashes $ (++) [h]
+  --    _ -> do return ()
+
+  (lastOut, _, clockChan) <- envReadOut p2z a2z
+
+  inps <- liftIO $ generate $ merkleGenerator 50 parties
   forMseq_ inps $ \cmd -> do
     writeChan z2p cmd
-    (pid, m) <- readChan p2z 
-    modifyIORef transcript (++ [(pid, m)])
+    () <- readChan pump
+    m <- readIORef lastOut
+    --(pid, m) <- readChan p2z
     case m of
-      MerkleF2P_TxHash h -> do modifyIORef txHashes $ (++) [h]
+      Just (Right (pid, MerkleF2P_TxHash h)) -> do modifyIORef txHashes $ (++) [h]
       _ -> do return ()
+
+  writeChan z2a $ (SttCruptZ2A_A2F (Left ClockA2F_GetCount)) 
+  c <- readChan clockChan 
+  delivers <- liftIO $ generate $ rqDeliverAll c  
+  forMseq_ delivers $ \d -> do
+    case d of
+      CmdDeliver idx' -> do
+        writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')))
+      _ -> error "should't have any other messages"
+    readChan pump
 
   tr <- readIORef transcript  
  

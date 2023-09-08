@@ -14,3 +14,7 @@ laddr = "tcp://0.0.0.0:46657"
 laddr = "tcp://0.0.0.0:46656"
 seeds = ""
 addr_book_strict = false
+
+[consensus]
+timeout_commit = 10
+skip_timeout_commit = true
