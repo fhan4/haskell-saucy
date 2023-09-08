@@ -2,14 +2,9 @@
  PartialTypeSignatures, RankNTypes
   #-} 
 
-{-
-    BenOr QuickChecking
-    ===================
-
-  - here, unlike in ACast, a structured environment loops and sends Ones then Twos the maybe TwoD 
-    messages .
-  - we see if we can determing 
-
+{- This module uses quickceck to generate tests for the BenOr protocol in BenOr.hs
+   The testing here tries to be as agnostic as possible and makes use of different adversarial
+	 scheduling strategies inclduing censoring communication between pairs of parties, random delivery   of messages on a per-round or complete random basis.
 -}
 
 module CheckBenOr where
@@ -73,22 +68,8 @@ performBenOrEnv benOrConfig cmdList z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump
 
 {- In BenOr the ssids only need to be difference because the round number isn't encoded in them.
   therefore we can jut generate random ssid numbers for each message without caring too much about it -}
---benOrGenerator :: Int -> Int -> [Gen SID] -> [PID] -> [Gen Bool] -> Int -> Int -> Gen [Either BenOrInput AsyncInput]
 benOrGenerator :: Int -> Int -> (String -> SID) -> [PID] -> [Gen Bool] -> Int -> Int -> Gen [Either BenOrInput AsyncInput]
 benOrGenerator n numQueue ssid parties inputs round dts = frequency $
-  --if n==0 then []
-  --else 
-  --  [ (1, return []), 
-  --    (2, if numQueue == 0 then benOrGenerator n 0 ssid parties inputs round dts
-  --         else (:) <$> (choose (0,numQueue-1) >>= \i -> return (Right (CmdDeliver i, 0))) <*> (benOrGenerator (n-1) (numQueue-1) ssid parties inputs round dts)),
-  --    --(5, (:) <$> return 
-  --    (5, (:) <$> ((shuffle parties) >>= (\party -> oneof inputs >>= (\inp -> (choose (0, 999999) :: Gen Int) >>= (\sid -> 
-  --          return (Left (CmdOne (ssid (show sid)) (party !! 0) round inp dts, 0)))))) <*> (benOrGenerator (n-1) numQueue ssid parties inputs round dts)),
-  --    (5, (:) <$> ((shuffle parties) >>= (\party -> (choose (0, 999999) :: Gen Int) >>= (\sid -> 
-  --          return (Left (CmdTwo (ssid (show sid)) (party !! 0) round 0, 0))))) <*> (benOrGenerator (n-1) numQueue ssid parties inputs round dts)),
-  --    (5, (:) <$> ((shuffle parties) >>= (\party -> oneof inputs >>= (\inp -> (choose (0, 999999) :: Gen Int) >>= (\sid -> 
-  --          return (Left (CmdTwoD (ssid (show sid)) (party !! 0) round inp 0, 0)))))) <*> (benOrGenerator (n-1) numQueue ssid parties inputs round dts)) 
-  --  ]
     [ (1, return []), 
       (10, if n==0 then return []
            else if numQueue==0 then (benOrGenerator n 0 ssid parties inputs round dts)
@@ -104,6 +85,9 @@ benOrGenerator n numQueue ssid parties inputs round dts = frequency $
             return (Left (CmdTwoD (ssid (show sid)) (party !! 0) round inp 0, 0)))))) <*> (benOrGenerator (n-1) numQueue ssid parties inputs round dts)) 
     ]
 
+-- Takes in a BenOrCmd and executes it by writing the actual message on the channel
+-- makes it easy to create an environment that takes in a tape of commands and executes
+-- them all 
 envExecBenOrCmd :: (MonadITM m) =>
   (Chan (PID, ((ClockP2F BenOrP2F), CarryTokens Int))) ->
   (Chan ((SttCruptZ2A (ClockP2F (SID, ((BenOrMsg, TransferTokens Int), CarryTokens Int))) (Either _ (SID, (MulticastA2F BenOrMsg, TransferTokens Int)))), CarryTokens Int)) ->
@@ -235,14 +219,6 @@ propUEnvBenOrSafety parties crupts importAmt z2exec (p2z, z2p) (a2z, z2a) (f2z, 
   
   writeChan outp ((sid, parties, (Map.fromList cruptMapList), t), cl, tr)
 
---smallNumber :: Int -> Gen Int
---smallNumber t = fmap ((`mod` t) . abs ) arbitrary
---
---partiesBetween :: Int -> Int -> Gen [PID]
---partiesBetween x t = do
---  y <- smallNumber t
---  vector (x+y) :: Gen [Int]
-
 -- A property that asserts safety holds
 prop_uBenOrSafety one two dec = monadicIO $ do
     forAllM ( suchThat (partiesBetween 6 10) nonZeroParties) $ \ps -> do
@@ -252,6 +228,7 @@ prop_uBenOrSafety one two dec = monadicIO $ do
         let parties = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank"] :: [PID]
         let prot () = protBenOrBreak one two dec 0
         let crupt = ["Alice"]
+		-- TODO: commented generation of parties to test a simple aspect of the protocol
     --parties <- liftIO $ (generate arbitrary :: IO [PID])
     --crupt <- liftIO $ (generate $ sublistOf parties) >>= return . take (length parties `div` 5)
         --let crupt = cc
@@ -318,7 +295,7 @@ benOrGeneratorOnlyMsgs n numQueue ssid parties inputs round dts = frequency $
 -- results in all honest parties deciding some value (n==5). This environment:
 -- * random inputs for honest parties
 -- * delivers all messages from honest parties in a particular round
--- * doesn't inject byzanting messages
+-- * doesn't inject byzantine messages
 propUEnvBenOrCompletion
   :: (MonadEnvironment m) => Int -> Int ->
   Environment BenOrF2P ((ClockP2F BenOrP2F), CarryTokens Int)
@@ -405,9 +382,7 @@ propUEnvBenOrCompletion importAmt rounds z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f)
   
   writeChan outp ((sid, parties, (Map.fromList [("Alice",()), ("Bob", ())]), t), cl, tr)
 
--- the problem with such tests may not be solvable. If we move to more structured environments, we're losing some of the 
--- "fuzzing" part of testing. It's hard to say that a very structured environment is catching aberrant situatins where liveness
--- fails. It's unclear how exactly to proceed.
+{- the problem with such tests may not be solvable. If we move to more structured environments, we're losing some of the "fuzzing" part of testing. It's hard to say that a very structured environment is catching aberrant situatins where liveness fails. It's unclear how exactly to proceed. -}
 prop_benOrComplete liveCoin = monadicIO $ do
   --let prot () = protBenOr
   let prot () = (protBenOrBreak BenOrOneCorrect BenOrTwoDCorrect BenOrDecideCorrect liveCoin)
@@ -568,6 +543,7 @@ propEnvBenOrLivenessObserve inputTokens z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) 
   tr <- readIORef transcript 
   writeChan outp ((sid, parties, (Map.fromList [(crupt,())]), t), tr)
 
+-- the property for the above ^^^^^^^^^^^^ environment
 prop_benOrObserve = monadicIO $ do
   let prot () = protBenOr
   let parties = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank"] :: [PID]
@@ -602,6 +578,8 @@ prop_benOrObserve = monadicIO $ do
   cr <- readIORef commitRound
   monitor (collect cr)
 
+
+-- ==== (DEPRECATED) the environment below and it's property are no longer used ==== --
 {- this environment generator is quite structured towards the BenOr protocol where
    where inputs are given, some messages are delivered thenmessages are sent by corrupt parties
    according to where they are expected by the protocl. 
@@ -723,6 +701,7 @@ propEnvBenOrLiveness inputTokens z2exec (p2z, z2p) (a2z, z2a) (f2z, z2f) pump ou
   cl <- readIORef cmdList
   writeChan outp ((sid, parties, (Map.fromList [(crupt,())]), t), reverse cl, tr)
 
+-- ==== (DEPRECATED) the property below and it's environment above are no longer used ==== --
 -- runs tests on the real world protocol only
 -- no simulation checking
 -- this test runs the Liveness environment with some x import tokens

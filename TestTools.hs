@@ -122,11 +122,11 @@ updateIndex ref [] = []
 updateIndex ref (x:xs) = [if x > ref then (x-1) else x] ++ (updateIndex ref xs)
 
 -- given an set of indices to censor, generate a deliver list 		
-rqDeliverWithCensor :: [Int] -> Int -> Gen [AsyncCmd]
-rqDeliverWithCensor censoredIdxs n = frequency 
-	[ (1, return []),
-		(10, if n==0 then return [] else (choose (0,n-1) >>= \i -> if (elem i censoredIdxs) then (rqDeliverWithCensor censoredIdxs n) else (:) <$> return (CmdDeliver i) <*> (rqDeliverWithCensor (updateIndex i censoredIdxs) (n-1))))
-	]
+--rqDeliverWithCensor :: [Int] -> Int -> Gen [AsyncCmd]
+--rqDeliverWithCensor censoredIdxs n = frequency 
+--	[ (1, return []),
+--		(10, if n==0 then return [] else (choose (0,n-1) >>= \i -> if (elem i censoredIdxs) then (rqDeliverWithCensor censoredIdxs n) else (:) <$> return (CmdDeliver i) <*> (rqDeliverWithCensor (updateIndex i censoredIdxs) (n-1))))
+--	]
 
 -- takes a list of indices to deliver
 -- returns a list of deliver commands wit indices
@@ -145,104 +145,10 @@ countPOutputs transcript output = do
   n <- readIORef num
   return n
 
--- environment generate a sequence of Deliver and MakeProgress messages
--- and executes them
-envDeliverOrProgressSubset :: (MonadEnvironment m) =>
-    Chan Int -> Int -> Chan [Either customCmd AsyncInput] -> 
-  (Environment _f2p ((ClockP2F _p2f), CarryTokens Int)
-    (SttCruptA2Z p2a2z (Either (ClockF2A lf2a) rf2a))
-    ((SttCruptZ2A (ClockP2F z2a2p) (Either ClockA2F z2a2f)), CarryTokens Int) Void
-    ClockZ2F (config, [Either customcmd AsyncInput], ts) m)
-envDeliverOrProgressSubset clockChan t forCmdList _ _ (a2z, z2a) (f2z, z2f) pump _ = do
-  
-  cmdList <- newIORef []
-  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 0)
-  num <- readChan clockChan
-  delivers <- liftIO $ generate $ rqDeliverOrProgress num
-  modifyIORef cmdList $ (++) [Right (CmdGetCount, 0)]
-
-  forMseq_ delivers $ \d -> do
-    case d of
-      CmdDeliver idx' -> do
-        writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 0)
-        c <- readChan clockChan
-        modifyIORef cmdList $ (++) [Right (CmdGetCount, 0)]
-        if idx' < c then do
-          modifyIORef cmdList $ (++) [Right (d, 0)]
-          writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens 0)
-        else return ()
-      CmdMakeProgress -> do
-        writeChan z2f ClockZ2F_MakeProgress
-        modifyIORef cmdList $ (++) [Right (d, 0)]
-      _ -> error "Z: unexpected command"
-
-    () <- readChan pump
-    return ()
- 
-  c <- readIORef cmdList
-  writeChan forCmdList c
-  
--- Does the same as above, but at the end does Deliver messages
--- until the all the _existing_ codeblocks in the runqueue
--- and not new codeblocks using `thingsHappened` 
-envDeliverOrProgressAll :: (MonadEnvironment m) =>
-    IORef Int -> Chan Int -> Int -> Chan [Either customCmd AsyncInput] -> 
-  (Environment _f2p ((ClockP2F _p2f), CarryTokens Int)
-    (SttCruptA2Z p2a2z (Either (ClockF2A lf2a) rf2a))
-    ((SttCruptZ2A (ClockP2F z2a2p) (Either ClockA2F z2a2f)), CarryTokens Int) Void
-    ClockZ2F (config, [Either customcmd AsyncInput], ts) m)
-envDeliverOrProgressAll thingsHappened clockChan t forCmdList _ _ (a2z, z2a) (f2z, z2f) pump _ = do
-  
-  cmdList <- newIORef []
-  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 0)
-  num <- readChan clockChan
-  liftIO $ putStrLn $ "\n\t num: " ++ show num
-  th <- readIORef thingsHappened
-  liftIO $ putStrLn $ "\n\tthings happened: " ++ show th
-  delivers <- liftIO $ generate $ rqDeliverOrProgress num
-  modifyIORef cmdList $ (++) [Right (CmdGetCount, 0)]
-
-  forMseq_ delivers $ \d -> do
-    case d of
-      CmdDeliver idx' -> do
-        writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 0)
-        c <- readChan clockChan
-        modifyIORef cmdList $ (++) [Right (CmdGetCount, 0)]
-        if idx' < c then do
-          modifyIORef cmdList $ (++) [Right (d, 0)]
-          writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens 0)
-        else return ()
-      CmdMakeProgress -> do
-        writeChan z2f ClockZ2F_MakeProgress
-        modifyIORef cmdList $ (++) [Right (d, 0)]
-      _ -> error "Z: unexpected command"
-
-    () <- readChan pump
-    return ()
-
-  th <- readIORef thingsHappened
-  liftIO $ putStrLn $ "\n\tthings happened: " ++ show th
- 
-  if (th > num) then error "thingshappened doesn't work"
-  else return ()
-  delivers <- liftIO $ generate $ rqDeliverAll (num - th)
-  
-  forMseq_ delivers $ \d -> do
-    case d of
-      CmdDeliver idx' -> do
-        writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens 0)
-        modifyIORef cmdList $ (++) [Right (d,0)]
-      _ -> error "shouldn't be a makeprogress"
-    () <- readChan pump
-    return ()
- 
-  th <- readIORef thingsHappened
-  if (th /= num) then error ("didn't deliver everything (num " ++ show num ++ ") (th " ++ show th ++ ")")
-  else return ()
- 
-  c <- readIORef cmdList
-  writeChan forCmdList c
-
+-- Convenient tool for watching output and saving the last read output
+-- from A or a protocol party.
+-- RETURNS an IORef for the last output, an IORef of the transcript of outputs so far,
+--         and an a clockChan to read the current size of the queue
 envReadOut :: (MonadEnvironment m, Show p2z) => Chan (PID, p2z) -> 
   Chan (SttCruptA2Z f2p (Either (ClockF2A leak) f2a)) ->
   m (IORef (Maybe (Either (SttCruptA2Z f2p (Either (ClockF2A leak) f2a)) (PID, p2z))),
@@ -268,6 +174,7 @@ envReadOut _p2z _a2z = do
         ?pass
   return (lastOut, transcript, clockChan) 
 
+-- returns the current size of the queue
 envQueueSize :: (MonadEnvironment m) =>
   (Chan ((SttCruptZ2A (ClockP2F _p2f) (Either ClockA2F _a2f)), CarryTokens Int)) ->
   Chan Int -> Int -> m Int
@@ -275,6 +182,7 @@ envQueueSize z2a clockChan tk = do
   writeChan z2a $ (SttCruptZ2A_A2F (Left ClockA2F_GetCount), SendTokens 0)
   readChan clockChan
 
+-- is the current queue non-empty?
 envCheckQueue :: (MonadEnvironment m) => 
   (Chan ((SttCruptZ2A (ClockP2F _p2f) (Either ClockA2F _a2f)), CarryTokens Int)) ->
   Chan Int -> Int -> m Bool 
@@ -284,6 +192,15 @@ envCheckQueue z2a clockChan tk = do
 invert :: (a,b) -> (b,a)
 invert (a,b) = (b,a)
 
+{- VERY HELPFUL FOR ADVERSARIAL SCHEDULUING 
+   a process that grabs all leaks from fMulticast (!fMulticast) 
+   determines which indices in the queue correspond to which sender/receiver pair
+   RETURNS
+   			`doDeliver` - a function that accepts a list of censored PID pairs and deliver command. 
+                        It exeutes the command only if te pair is not censored.
+				`deliverByPairs` - a function that accepts a list of PID pairs and only delivers runqueue
+                           indices corresponding to messages between the pairs.
+-}
 envMapQueue :: (MonadEnvironment m) =>
   (Chan ((SttCruptZ2A (ClockP2F _p2f) (Either ClockA2F _a2f)), CarryTokens Int)) ->
   (Chan (SttCruptA2Z _f2p (Either (ClockF2A (SID, ((_leak, TransferTokens Int), CarryTokens Int))) _f2a))) -> Chan Int -> 
@@ -342,9 +259,109 @@ envMapQueue z2a a2z clockChan lastOut pump = do
 
   return (doDeliver, deliverByPairs)
 
-censoredIdxs :: (Eq a) => [(a,a)] -> [(Int, (a,a))] -> [Int]
-censoredIdxs cL [] = []
-censoredIdxs cL (x:xs) = if (elem (snd x) cL) || (elem (invert (snd x)) cL) then [fst x] ++ (censoredIdxs cL xs) else (censoredIdxs cL xs)
+--censoredIdxs :: (Eq a) => [(a,a)] -> [(Int, (a,a))] -> [Int]
+--censoredIdxs cL [] = []
+--censoredIdxs cL (x:xs) = if (elem (snd x) cL) || (elem (invert (snd x)) cL) then [fst x] ++ (censoredIdxs cL xs) else (censoredIdxs cL xs)
+
+
+
+-- environment generate a sequence of Deliver and MakeProgress messages
+-- and executes them
+envDeliverOrProgressSubset :: (MonadEnvironment m) =>
+    Chan Int -> Int -> Chan [Either customCmd AsyncInput] -> 
+  (Environment _f2p ((ClockP2F _p2f), CarryTokens Int)
+    (SttCruptA2Z p2a2z (Either (ClockF2A lf2a) rf2a))
+    ((SttCruptZ2A (ClockP2F z2a2p) (Either ClockA2F z2a2f)), CarryTokens Int) Void
+    ClockZ2F (config, [Either customcmd AsyncInput], ts) m)
+envDeliverOrProgressSubset clockChan t forCmdList _ _ (a2z, z2a) (f2z, z2f) pump _ = do
+  
+  cmdList <- newIORef []
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 0)
+  num <- readChan clockChan
+  delivers <- liftIO $ generate $ rqDeliverOrProgress num
+  modifyIORef cmdList $ (++) [Right (CmdGetCount, 0)]
+
+  forMseq_ delivers $ \d -> do
+    case d of
+      CmdDeliver idx' -> do
+        writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 0)
+        c <- readChan clockChan
+        modifyIORef cmdList $ (++) [Right (CmdGetCount, 0)]
+        if idx' < c then do
+          modifyIORef cmdList $ (++) [Right (d, 0)]
+          writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens 0)
+        else return ()
+      CmdMakeProgress -> do
+        writeChan z2f ClockZ2F_MakeProgress
+        modifyIORef cmdList $ (++) [Right (d, 0)]
+      _ -> error "Z: unexpected command"
+
+    () <- readChan pump
+    return ()
+ 
+  c <- readIORef cmdList
+  writeChan forCmdList c
+  
+-- Does the same as above, but at the end does Deliver messages
+-- until the all the _existing_ codeblocks in the runqueue are executed
+-- and not new codeblocks using `thingsHappened` 
+envDeliverOrProgressAll :: (MonadEnvironment m) =>
+    IORef Int -> Chan Int -> Int -> Chan [Either customCmd AsyncInput] -> 
+  (Environment _f2p ((ClockP2F _p2f), CarryTokens Int)
+    (SttCruptA2Z p2a2z (Either (ClockF2A lf2a) rf2a))
+    ((SttCruptZ2A (ClockP2F z2a2p) (Either ClockA2F z2a2f)), CarryTokens Int) Void
+    ClockZ2F (config, [Either customcmd AsyncInput], ts) m)
+envDeliverOrProgressAll thingsHappened clockChan t forCmdList _ _ (a2z, z2a) (f2z, z2f) pump _ = do
+  
+  cmdList <- newIORef []
+  writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 0)
+  num <- readChan clockChan
+  liftIO $ putStrLn $ "\n\t num: " ++ show num
+  th <- readIORef thingsHappened
+  liftIO $ putStrLn $ "\n\tthings happened: " ++ show th
+  delivers <- liftIO $ generate $ rqDeliverOrProgress num
+  modifyIORef cmdList $ (++) [Right (CmdGetCount, 0)]
+
+  forMseq_ delivers $ \d -> do
+    case d of
+      CmdDeliver idx' -> do
+        writeChan z2a $ ((SttCruptZ2A_A2F $ Left ClockA2F_GetCount), SendTokens 0)
+        c <- readChan clockChan
+        modifyIORef cmdList $ (++) [Right (CmdGetCount, 0)]
+        if idx' < c then do
+          modifyIORef cmdList $ (++) [Right (d, 0)]
+          writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens 0)
+        else return ()
+      CmdMakeProgress -> do
+        writeChan z2f ClockZ2F_MakeProgress
+        modifyIORef cmdList $ (++) [Right (d, 0)]
+      _ -> error "Z: unexpected command"
+
+    () <- readChan pump
+    return ()
+
+  th <- readIORef thingsHappened
+  liftIO $ putStrLn $ "\n\tthings happened: " ++ show th
+ 
+  if (th > num) then error "thingshappened doesn't work"
+  else return ()
+  delivers <- liftIO $ generate $ rqDeliverAll (num - th)
+  
+  forMseq_ delivers $ \d -> do
+    case d of
+      CmdDeliver idx' -> do
+        writeChan z2a $ ((SttCruptZ2A_A2F $ Left (ClockA2F_Deliver idx')), SendTokens 0)
+        modifyIORef cmdList $ (++) [Right (d,0)]
+      _ -> error "shouldn't be a makeprogress"
+    () <- readChan pump
+    return ()
+ 
+  th <- readIORef thingsHappened
+  if (th /= num) then error ("didn't deliver everything (num " ++ show num ++ ") (th " ++ show th ++ ")")
+  else return ()
+ 
+  c <- readIORef cmdList
+  writeChan forCmdList c
 
 -- does no MakeProgress messages only Delivers
 -- until the runqueue is empty
